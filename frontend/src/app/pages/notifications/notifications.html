@@ -1,0 +1,41 @@
+<div class="page-header">
+  <h1>Notifications</h1>
+  <p>{{ unreadCount }} unread message{{ unreadCount !== 1 ? 's' : '' }}</p>
+</div>
+
+@if (unreadCount > 0) {
+  <div class="notifications-actions">
+    <p-button label="Mark all as read" icon="pi pi-check-square" [text]="true" (onClick)="markAllRead()" />
+  </div>
+}
+
+@if (loading()) {
+  <div class="loading-container"><p-progressspinner /></div>
+} @else if (notifications().length === 0) {
+  <p-card>
+    <div class="empty-state">
+      <i class="pi pi-bell-slash"></i>
+      <p>You're all caught up. No notifications.</p>
+    </div>
+  </p-card>
+} @else {
+  <div class="notification-list">
+    @for (n of notifications(); track n.id) {
+      <div class="notification-item" [class.unread]="!n.read" (click)="markRead(n)">
+        <div class="notification-icon" [class.read]="n.read">
+          <i [class]="n.type === 'PAYMENT_RECEIVED' ? 'pi pi-arrow-down' : n.type === 'PAYMENT_SENT' ? 'pi pi-arrow-up' : 'pi pi-info-circle'"></i>
+        </div>
+        <div class="notification-body">
+          <div class="notification-header">
+            <p-tag [value]="n.type.replace('_', ' ')" [severity]="typeSeverity(n.type)" />
+            <span class="notification-time">{{ n.createdAt | date:'short' }}</span>
+          </div>
+          <p class="notification-message">{{ n.message }}</p>
+        </div>
+        @if (!n.read) {
+          <div class="unread-dot"></div>
+        }
+      </div>
+    }
+  </div>
+}

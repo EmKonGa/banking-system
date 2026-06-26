@@ -1,0 +1,96 @@
+<p-toast />
+
+<div class="page-header">
+  <h1>Transfer</h1>
+  <p>Send funds between accounts</p>
+</div>
+
+<div class="transfer-layout">
+  <p-card header="New Transfer" styleClass="transfer-form-card">
+    <form [formGroup]="form" (ngSubmit)="submit()" class="transfer-form">
+      <div class="field">
+        <label>From Account</label>
+        <p-select
+          formControlName="fromAccountId"
+          [options]="accountOptions()"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Select source account"
+          [fluid]="true"
+        />
+      </div>
+
+      <div class="field">
+        <label>To Account ID</label>
+        <p-inputnumber
+          formControlName="toAccountId"
+          placeholder="Enter recipient account ID"
+          [fluid]="true"
+          [useGrouping]="false"
+        />
+      </div>
+
+      <div class="field">
+        <label>Amount</label>
+        <p-inputnumber
+          formControlName="amount"
+          mode="currency"
+          currency="USD"
+          placeholder="0.00"
+          [fluid]="true"
+          [minFractionDigits]="2"
+        />
+      </div>
+
+      <div class="field">
+        <label>Description <span class="optional">(optional)</span></label>
+        <input pInputText formControlName="description" placeholder="What's this for?" />
+      </div>
+
+      <p-button
+        label="Send Transfer"
+        icon="pi pi-send"
+        type="submit"
+        [loading]="submitting()"
+        [disabled]="form.invalid"
+        [fluid]="true"
+      />
+    </form>
+  </p-card>
+
+  <div class="transactions-panel">
+    <h2>Transaction History</h2>
+
+    @if (loading()) {
+      <p-card><div class="loading-placeholder">Loading transactions…</div></p-card>
+    } @else if (transactions().length === 0) {
+      <p-card>
+        <div class="empty-state">
+          <i class="pi pi-inbox"></i>
+          <p>No transactions yet.</p>
+        </div>
+      </p-card>
+    } @else {
+      <p-card>
+        <p-table [value]="transactions()" [tableStyle]="{ 'min-width': '30rem' }">
+          <ng-template #header>
+            <tr>
+              <th>Date</th>
+              <th>From → To</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </ng-template>
+          <ng-template #body let-tx>
+            <tr>
+              <td>{{ tx.createdAt | date:'short' }}</td>
+              <td>#{{ tx.fromAccountId }} → #{{ tx.toAccountId }}</td>
+              <td>{{ tx.amount | currency }}</td>
+              <td><p-tag [value]="tx.status" [severity]="txSeverity(tx.status)" /></td>
+            </tr>
+          </ng-template>
+        </p-table>
+      </p-card>
+    }
+  </div>
+</div>

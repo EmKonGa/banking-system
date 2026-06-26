@@ -1,0 +1,98 @@
+.accounts-actions {
+  margin-bottom: 1.5rem;
+}
+
+.accounts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+:host ::ng-deep .account-card {
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  border: 2px solid transparent;
+
+  &:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+  &.selected { border-color: var(--p-primary-500, #3b82f6); }
+
+  .p-card-body { padding: 1.25rem; }
+}
+
+.account-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.account-type-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--p-primary-50, #eff6ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  i {
+    color: var(--p-primary-600, #2563eb);
+    font-size: 1.1rem;
+  }
+}
+
+.account-balance {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--p-text-color, #1e293b);
+  margin-bottom: 0.5rem;
+}
+
+.account-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color, #64748b);
+}
+
+.account-type { font-weight: 500; }
+
+.transactions-section {
+  h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 1rem;
+  }
+}
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  padding: 3rem;
+}
+
+.empty-accounts, .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--p-text-muted-color, #64748b);
+  text-align: center;
+
+  i { font-size: 2rem; }
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.dialog-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--p-text-color);
+}

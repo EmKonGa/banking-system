@@ -1,0 +1,75 @@
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <p>Overview of your banking activity</p>
+</div>
+
+<div class="summary-cards">
+  <p-card styleClass="summary-card">
+    <div class="summary-icon bg-blue">
+      <i class="pi pi-wallet"></i>
+    </div>
+    <div class="summary-info">
+      <span class="summary-label">Total Balance</span>
+      <span class="summary-value">{{ totalBalance | currency }}</span>
+    </div>
+  </p-card>
+
+  <p-card styleClass="summary-card">
+    <div class="summary-icon bg-green">
+      <i class="pi pi-credit-card"></i>
+    </div>
+    <div class="summary-info">
+      <span class="summary-label">Accounts</span>
+      <span class="summary-value">{{ accounts().length }}</span>
+    </div>
+  </p-card>
+
+  <p-card styleClass="summary-card">
+    <div class="summary-icon bg-purple">
+      <i class="pi pi-arrow-right-arrow-left"></i>
+    </div>
+    <div class="summary-info">
+      <span class="summary-label">Transactions</span>
+      <span class="summary-value">{{ recentTransactions().length }}</span>
+    </div>
+  </p-card>
+</div>
+
+<div class="section-header">
+  <h2>Recent Transactions</h2>
+  <p-button label="View all" [text]="true" routerLink="/transfer" size="small" />
+</div>
+
+@if (loading()) {
+  <div class="loading-container">
+    <p-progressspinner />
+  </div>
+} @else if (recentTransactions().length === 0) {
+  <p-card>
+    <div class="empty-state">
+      <i class="pi pi-inbox"></i>
+      <p>No transactions yet. <a routerLink="/transfer">Make a transfer</a> to get started.</p>
+    </div>
+  </p-card>
+} @else {
+  <p-card>
+    <p-table [value]="recentTransactions()" [tableStyle]="{ 'min-width': '30rem' }">
+      <ng-template #header>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Amount</th>
+          <th>Status</th>
+        </tr>
+      </ng-template>
+      <ng-template #body let-tx>
+        <tr>
+          <td>{{ tx.createdAt | date:'medium' }}</td>
+          <td>{{ tx.type }}</td>
+          <td>{{ tx.amount | currency }}</td>
+          <td><p-tag [value]="tx.status" [severity]="txSeverity(tx.status)" /></td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </p-card>
+}

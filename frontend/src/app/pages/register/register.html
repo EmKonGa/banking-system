@@ -1,0 +1,43 @@
+<div class="auth-page">
+  <p-card styleClass="auth-card">
+    <div class="auth-brand">
+      <i class="pi pi-building-columns"></i>
+      <h2>BankApp</h2>
+    </div>
+    <h3>Create an account</h3>
+    <p class="auth-subtitle">Start banking today</p>
+
+    @if (errorMsg()) {
+      <p-message severity="error" [text]="errorMsg()" styleClass="auth-error" />
+    }
+
+    <form [formGroup]="form" (ngSubmit)="submit()" class="auth-form">
+      <p-floatlabel variant="on">
+        <input pInputText id="name" formControlName="name" fluid />
+        <label for="name">Full name</label>
+      </p-floatlabel>
+
+      <p-floatlabel variant="on">
+        <input pInputText id="email" formControlName="email" type="email" fluid />
+        <label for="email">Email address</label>
+      </p-floatlabel>
+
+      <p-floatlabel variant="on">
+        <p-password id="password" formControlName="password" [fluid]="true" />
+        <label for="password">Password (min. 6 chars)</label>
+      </p-floatlabel>
+
+      <p-button
+        label="Create account"
+        type="submit"
+        [loading]="loading()"
+        [disabled]="form.invalid"
+        [fluid]="true"
+      />
+    </form>
+
+    <p class="auth-link">
+      Already have an account? <a routerLink="/login">Sign in</a>
+    </p>
+  </p-card>
+</div>
