@@ -1,1 +1,54 @@
-@use '../login/login.scss';
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--p-surface-50, #f8fafc);
+  padding: 1rem;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+
+  i { font-size: 1.75rem; color: var(--p-primary-500, #3b82f6); }
+  h2 { margin: 0; font-size: 1.4rem; font-weight: 700; }
+}
+
+h3 { margin: 0 0 0.25rem; font-size: 1.25rem; font-weight: 600; }
+
+.auth-subtitle {
+  margin: 0 0 1.5rem;
+  color: var(--p-text-muted-color, #64748b);
+  font-size: 0.9rem;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.auth-error { margin-bottom: 1rem; }
+
+.auth-link {
+  margin-top: 1.25rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--p-text-muted-color, #64748b);
+
+  a {
+    color: var(--p-primary-500, #3b82f6);
+    text-decoration: none;
+    font-weight: 500;
+    &:hover { text-decoration: underline; }
+  }
+}
+
+:host ::ng-deep .auth-card {
+  width: 100%;
+  max-width: 420px;
+}
