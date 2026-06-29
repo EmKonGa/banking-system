@@ -5,6 +5,7 @@ import { Button } from 'primeng/button';
 import { Tag } from 'primeng/tag';
 import { ProgressSpinner } from 'primeng/progressspinner';
 import { NotificationService } from '../../core/services/notification.service';
+import { WebSocketService } from '../../core/services/websocket.service';
 import { Notification } from '../../core/models';
 
 @Component({
@@ -15,6 +16,7 @@ import { Notification } from '../../core/models';
 })
 export class NotificationsPage implements OnInit {
   private notificationSvc = inject(NotificationService);
+  private wsSvc = inject(WebSocketService);
 
   notifications = signal<Notification[]>([]);
   loading = signal(true);
@@ -25,6 +27,9 @@ export class NotificationsPage implements OnInit {
 
   ngOnInit(): void {
     this.load();
+    this.wsSvc.notification$.subscribe(n => {
+      this.notifications.update(list => [n, ...list]);
+    });
   }
 
   load(): void {

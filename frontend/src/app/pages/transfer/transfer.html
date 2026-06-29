@@ -21,13 +21,8 @@
       </div>
 
       <div class="field">
-        <label>To Account ID</label>
-        <p-inputnumber
-          formControlName="toAccountId"
-          placeholder="Enter recipient account ID"
-          [fluid]="true"
-          [useGrouping]="false"
-        />
+        <label>To Account Number</label>
+        <input pInputText formControlName="toAccountNumber" placeholder="e.g. BA0000000001" style="width:100%" />
       </div>
 
       <div class="field">
@@ -84,7 +79,7 @@
           <ng-template #body let-tx>
             <tr>
               <td>{{ tx.createdAt | date:'short' }}</td>
-              <td>#{{ tx.fromAccountId }} → #{{ tx.toAccountId }}</td>
+              <td>{{ tx.fromAccountNumber }} → {{ tx.toAccountNumber }}</td>
               <td>{{ tx.amount | currency }}</td>
               <td><p-tag [value]="tx.status" [severity]="txSeverity(tx.status)" /></td>
             </tr>

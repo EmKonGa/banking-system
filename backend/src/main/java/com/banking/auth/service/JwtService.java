@@ -22,9 +22,14 @@ public class JwtService {
 
     public String generateAccessToken(UserDetails user) {
         Date now = new Date();
+        String role = user.getAuthorities().stream()
+                .findFirst()
+                .map(a -> a.getAuthority().replace("ROLE_", ""))
+                .orElse("USER");
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())       // jti — used for logout blacklisting
                 .subject(user.getUsername())            // email
+                .claim("role", role)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + props.getAccessExpirationMs()))
                 .signWith(signingKey())

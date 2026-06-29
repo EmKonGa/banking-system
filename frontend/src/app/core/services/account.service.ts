@@ -11,7 +11,7 @@ export class AccountService {
     return this.http.get<Account[]>('/api/accounts');
   }
 
-  getAccount(id: number): Observable<Account> {
+  getAccount(id: string): Observable<Account> {
     return this.http.get<Account>(`/api/accounts/${id}`);
   }
 
@@ -19,7 +19,19 @@ export class AccountService {
     return this.http.post<Account>('/api/accounts', req);
   }
 
-  getAccountTransactions(id: number): Observable<Transaction[]> {
+  getAccountTransactions(id: string): Observable<Transaction[]> {
     return this.http.get<Transaction[]>(`/api/accounts/${id}/transactions`);
+  }
+
+  deposit(id: string, amount: number): Observable<Account> {
+    return this.http.post<Account>(`/api/accounts/${id}/deposit`, { amount });
+  }
+
+  deleteAccount(id: string): Observable<void> {
+    return this.http.delete<void>(`/api/accounts/${id}`);
+  }
+
+  freezeAccount(id: string): Observable<Account> {
+    return this.http.patch<Account>(`/api/accounts/${id}/freeze`, {});
   }
 }

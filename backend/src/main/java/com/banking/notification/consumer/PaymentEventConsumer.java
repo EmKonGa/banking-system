@@ -24,15 +24,15 @@ public class PaymentEventConsumer {
 
             notificationService.create(
                     event.fromUserId(),
-                    String.format("You sent $%s from account ...%s",
-                            amount, event.fromAccountId().toString().substring(28)),
+                    String.format("You sent $%s from account %s to account %s",
+                            amount, event.fromAccountNumber(), event.toAccountNumber()),
                     NotificationType.PAYMENT_SENT
             );
 
             notificationService.create(
                     event.toUserId(),
-                    String.format("You received $%s to account ...%s",
-                            amount, event.toAccountId().toString().substring(28)),
+                    String.format("You received $%s to account %s from account %s",
+                            amount, event.toAccountNumber(), event.fromAccountNumber()),
                     NotificationType.PAYMENT_RECEIVED
             );
         } catch (Exception e) {

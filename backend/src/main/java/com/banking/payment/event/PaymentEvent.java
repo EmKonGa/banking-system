@@ -10,6 +10,8 @@ public record PaymentEvent(
         UUID transactionId,
         UUID fromAccountId,
         UUID toAccountId,
+        String fromAccountNumber,
+        String toAccountNumber,
         UUID fromUserId,
         UUID toUserId,
         BigDecimal amount,

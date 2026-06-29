@@ -1,5 +1,6 @@
 package com.banking.payment.service;
 
+import com.banking.account.dto.AccountResponse;
 import com.banking.account.entity.Account;
 import com.banking.account.entity.AccountStatus;
 import com.banking.account.repository.AccountRepository;
@@ -15,9 +16,13 @@ import com.banking.user.entity.User;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.List;
@@ -32,6 +37,7 @@ public class PaymentService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public TransactionResponse transfer(TransferRequest request) {
@@ -39,13 +45,13 @@ public class PaymentService {
 
         Account from = accountRepository.findById(request.fromAccountId())
                 .orElseThrow(() -> new AppException("Source account not found", HttpStatus.NOT_FOUND));
-        Account to = accountRepository.findById(request.toAccountId())
+        Account to = accountRepository.findByAccountNumber(request.toAccountNumber())
                 .orElseThrow(() -> new AppException("Destination account not found", HttpStatus.NOT_FOUND));
 
         if (!from.getUser().getId().equals(sender.getId())) {
             throw new AppException("Source account not found", HttpStatus.NOT_FOUND);
         }
-        if (from.getId().equals(to.getId())) {
+        if (from.getAccountNumber().equals(to.getAccountNumber())) {
             throw new AppException("Cannot transfer to the same account", HttpStatus.BAD_REQUEST);
         }
         if (from.getStatus() != AccountStatus.ACTIVE) {
@@ -71,17 +77,33 @@ public class PaymentService {
                 .build();
         transactionRepository.save(tx);
 
-        kafkaTemplate.send(PAYMENT_TOPIC, tx.getId().toString(),
-                new PaymentEvent(
-                        tx.getId(),
-                        from.getId(),
-                        to.getId(),
-                        from.getUser().getId(),
-                        to.getUser().getId(),
-                        request.amount(),
-                        TransactionType.TRANSFER,
-                        Instant.now()
-                ));
+        // Snapshot values now (inside transaction) to use after commit
+        PaymentEvent event = new PaymentEvent(
+                tx.getId(),
+                from.getId(),
+                to.getId(),
+                from.getAccountNumber(),
+                to.getAccountNumber(),
+                from.getUser().getId(),
+                to.getUser().getId(),
+                request.amount(),
+                TransactionType.TRANSFER,
+                Instant.now()
+        );
+        AccountResponse fromSnapshot = AccountResponse.from(from);
+        AccountResponse toSnapshot = AccountResponse.from(to);
+        String fromUserId = from.getUser().getId().toString();
+        String toUserId = to.getUser().getId().toString();
+        String txId = tx.getId().toString();
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                kafkaTemplate.send(PAYMENT_TOPIC, txId, event);
+                messagingTemplate.convertAndSendToUser(fromUserId, "/queue/balance", fromSnapshot);
+                messagingTemplate.convertAndSendToUser(toUserId, "/queue/balance", toSnapshot);
+            }
+        });
 
         return TransactionResponse.from(tx);
     }

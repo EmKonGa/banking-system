@@ -10,8 +10,8 @@ import java.util.UUID;
 
 public record TransactionResponse(
         UUID id,
-        UUID fromAccountId,
-        UUID toAccountId,
+        String fromAccountNumber,
+        String toAccountNumber,
         BigDecimal amount,
         TransactionType type,
         TransactionStatus status,
@@ -21,8 +21,8 @@ public record TransactionResponse(
     public static TransactionResponse from(Transaction t) {
         return new TransactionResponse(
                 t.getId(),
-                t.getFromAccount() != null ? t.getFromAccount().getId() : null,
-                t.getToAccount().getId(),
+                t.getFromAccount() != null ? t.getFromAccount().getAccountNumber() : null,
+                t.getToAccount().getAccountNumber(),
                 t.getAmount(),
                 t.getType(),
                 t.getStatus(),

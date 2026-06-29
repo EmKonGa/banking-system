@@ -22,8 +22,40 @@
       <div class="account-balance">{{ account.balance | currency }}</div>
       <div class="account-meta">
         <span class="account-type">{{ account.type | titlecase }}</span>
-        <span class="account-id">#{{ account.id }}</span>
+        <span class="account-id">{{ account.accountNumber }}</span>
       </div>
+      @if (isAdmin) {
+        <div class="account-admin-actions">
+          @if (account.status === 'ACTIVE') {
+            <p-button
+              label="Deposit"
+              icon="pi pi-plus-circle"
+              size="small"
+              severity="success"
+              [text]="true"
+              (onClick)="openDepositDialog(account, $event)"
+            />
+          }
+          @if (account.status !== 'CLOSED') {
+            <p-button
+              [label]="account.status === 'FROZEN' ? 'Unfreeze' : 'Freeze'"
+              [icon]="account.status === 'FROZEN' ? 'pi pi-lock-open' : 'pi pi-lock'"
+              size="small"
+              severity="warn"
+              [text]="true"
+              (onClick)="freezeAccount(account, $event)"
+            />
+            <p-button
+              label="Close"
+              icon="pi pi-ban"
+              size="small"
+              severity="danger"
+              [text]="true"
+              (onClick)="deleteAccount(account, $event)"
+            />
+          }
+        </div>
+      }
     </p-card>
   } @empty {
     <div class="empty-accounts">
@@ -35,7 +67,7 @@
 
 @if (selectedAccount()) {
   <div class="transactions-section">
-    <h2>Transactions — Account #{{ selectedAccount()!.id }}</h2>
+    <h2>Transactions — {{ selectedAccount()!.accountNumber }}</h2>
 
     @if (loadingTx()) {
       <div class="loading-container"><p-progressspinner /></div>
@@ -73,6 +105,7 @@
   </div>
 }
 
+<!-- Create Account Dialog -->
 <p-dialog
   header="Create New Account"
   [(visible)]="showCreateDialog"
@@ -92,5 +125,29 @@
   <ng-template #footer>
     <p-button label="Cancel" [text]="true" severity="secondary" (onClick)="showCreateDialog.set(false)" />
     <p-button label="Create" [loading]="creating()" (onClick)="createAccount()" />
+  </ng-template>
+</p-dialog>
+
+<!-- Deposit Dialog (Admin only) -->
+<p-dialog
+  header="Deposit Funds"
+  [(visible)]="showDepositDialog"
+  [modal]="true"
+  [style]="{ width: '360px' }"
+>
+  <div class="dialog-body">
+    <p class="dialog-label">Account: <strong>#{{ depositAccount()?.id }}</strong></p>
+    <label class="dialog-label">Amount</label>
+    <p-inputnumber
+      [(ngModel)]="depositAmount"
+      mode="currency"
+      currency="USD"
+      [min]="0.01"
+      [fluid]="true"
+    />
+  </div>
+  <ng-template #footer>
+    <p-button label="Cancel" [text]="true" severity="secondary" (onClick)="showDepositDialog.set(false)" />
+    <p-button label="Deposit" severity="success" [loading]="depositing()" (onClick)="confirmDeposit()" />
   </ng-template>
 </p-dialog>

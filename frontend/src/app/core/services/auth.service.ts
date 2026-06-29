@@ -42,6 +42,17 @@ export class AuthService {
     return localStorage.getItem('accessToken');
   }
 
+  isAdmin(): boolean {
+    const token = this.getAccessToken();
+    if (!token) return false;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.role === 'ADMIN';
+    } catch {
+      return false;
+    }
+  }
+
   private storeTokens(res: AuthResponse): void {
     localStorage.setItem('accessToken', res.accessToken);
     localStorage.setItem('refreshToken', res.refreshToken);

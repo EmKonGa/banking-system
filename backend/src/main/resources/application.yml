@@ -3,10 +3,10 @@ spring:
     name: banking-system
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:banking_db}
-    username: ${POSTGRES_USER:banking_user}
-    password: ${POSTGRES_PASSWORD:banking_pass}
-    driver-class-name: org.postgresql.Driver
+    url: jdbc:oracle:thin:@${DB_HOST:localhost}:${DB_PORT:1522}/XEPDB1
+    username: ${ORACLE_USER:banking_user}
+    password: ${ORACLE_USER_PASSWORD:banking_pass}
+    driver-class-name: oracle.jdbc.OracleDriver
 
   jpa:
     hibernate:
@@ -14,7 +14,7 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        dialect: org.hibernate.dialect.OracleDialect
         format_sql: true
 
   data:
@@ -41,6 +41,12 @@ app:
     secret: ${JWT_SECRET:dev-secret-change-in-production-must-be-long-enough}
     access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:900000}       # 15 minutes
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}  # 7 days
+
+logging:
+  file:
+    name: C:/AD_TMP/vibe-code/banking.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
 management:
   endpoints:

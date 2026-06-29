@@ -20,4 +20,6 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
            "WHERE t.fromAccount.id = :accountId OR t.toAccount.id = :accountId " +
            "ORDER BY t.createdAt DESC")
     List<Transaction> findByAccountId(UUID accountId);
+
+    boolean existsByFromAccountIdOrToAccountId(UUID fromAccountId, UUID toAccountId);
 }

@@ -32,11 +32,11 @@ export class TransferPage implements OnInit {
   loading = signal(false);
   submitting = signal(false);
 
-  accountOptions = signal<{ label: string; value: number }[]>([]);
+  accountOptions = signal<{ label: string; value: string }[]>([]);
 
   form = this.fb.group({
-    fromAccountId: [null as number | null, Validators.required],
-    toAccountId: [null as number | null, [Validators.required, Validators.min(1)]],
+    fromAccountId: [null as string | null, Validators.required],
+    toAccountNumber: [null as string | null, Validators.required],
     amount: [null as number | null, [Validators.required, Validators.min(0.01)]],
     description: ['']
   });
@@ -45,7 +45,7 @@ export class TransferPage implements OnInit {
     this.accountSvc.getAccounts().subscribe(list => {
       this.accounts.set(list);
       this.accountOptions.set(
-        list.map(a => ({ label: `${a.type} #${a.id} — ${a.balance.toFixed(2)}`, value: a.id }))
+        list.map(a => ({ label: `${a.accountNumber} (${a.type}) — $${a.balance.toFixed(2)}`, value: a.id }))
       );
     });
 
@@ -62,12 +62,12 @@ export class TransferPage implements OnInit {
 
   submit(): void {
     if (this.form.invalid) return;
-    const { fromAccountId, toAccountId, amount, description } = this.form.getRawValue();
+    const { fromAccountId, toAccountNumber, amount, description } = this.form.getRawValue();
     this.submitting.set(true);
 
     this.paymentSvc.transfer({
       fromAccountId: fromAccountId!,
-      toAccountId: toAccountId!,
+      toAccountNumber: toAccountNumber!,
       amount: amount!,
       description: description || undefined
     }).subscribe({

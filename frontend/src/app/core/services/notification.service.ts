@@ -11,7 +11,7 @@ export class NotificationService {
     return this.http.get<Notification[]>('/api/notifications');
   }
 
-  markRead(id: number): Observable<void> {
+  markRead(id: string): Observable<void> {
     return this.http.patch<void>(`/api/notifications/${id}/read`, {});
   }
 
