@@ -32,13 +32,16 @@ public class NotificationService {
                 .type(type)
                 .build());
         NotificationResponse response = NotificationResponse.from(saved);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                messagingTemplate.convertAndSendToUser(
-                        userId.toString(), "/queue/notifications", response);
-            }
-        });
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    messagingTemplate.convertAndSendToUser(userId.toString(), "/queue/notifications", response);
+                }
+            });
+        } else {
+            messagingTemplate.convertAndSendToUser(userId.toString(), "/queue/notifications", response);
+        }
     }
 
     public List<NotificationResponse> myNotifications() {

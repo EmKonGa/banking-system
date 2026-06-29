@@ -96,12 +96,16 @@ public class PaymentService {
         String toUserId = to.getUser().getId().toString();
         String txId = tx.getId().toString();
 
+        TransactionResponse txSnapshot = TransactionResponse.from(tx);
+
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 kafkaTemplate.send(PAYMENT_TOPIC, txId, event);
                 messagingTemplate.convertAndSendToUser(fromUserId, "/queue/balance", fromSnapshot);
                 messagingTemplate.convertAndSendToUser(toUserId, "/queue/balance", toSnapshot);
+                messagingTemplate.convertAndSendToUser(fromUserId, "/queue/transaction", txSnapshot);
+                messagingTemplate.convertAndSendToUser(toUserId, "/queue/transaction", txSnapshot);
             }
         });
 

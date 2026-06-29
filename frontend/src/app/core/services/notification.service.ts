@@ -1,21 +1,33 @@
-import { inject, Injectable } from '@angular/core';
+import { inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 import { Notification } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class NotificationService {
   private http = inject(HttpClient);
 
+  readonly unreadCount = signal(0);
+
   getNotifications(): Observable<Notification[]> {
-    return this.http.get<Notification[]>('/api/notifications');
+    return this.http.get<Notification[]>('/api/notifications').pipe(
+      tap(list => this.unreadCount.set(list.filter(n => !n.read).length))
+    );
   }
 
   markRead(id: string): Observable<void> {
-    return this.http.patch<void>(`/api/notifications/${id}/read`, {});
+    return this.http.patch<void>(`/api/notifications/${id}/read`, {}).pipe(
+      tap(() => this.unreadCount.update(n => Math.max(0, n - 1)))
+    );
   }
 
   markAllRead(): Observable<void> {
-    return this.http.patch<void>('/api/notifications/read-all', {});
+    return this.http.patch<void>('/api/notifications/read-all', {}).pipe(
+      tap(() => this.unreadCount.set(0))
+    );
+  }
+
+  incrementUnread(): void {
+    this.unreadCount.update(n => n + 1);
   }
 }

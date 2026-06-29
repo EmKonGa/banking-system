@@ -50,7 +50,14 @@ export class AccountsPage implements OnInit {
     this.loadAccounts();
     this.wsSvc.balance$.subscribe(updated => {
       this.accounts.update(list => list.map(a => a.id === updated.id ? updated : a));
-      if (this.selectedAccount()?.id === updated.id) this.selectedAccount.set(updated);
+      if (this.selectedAccount()?.id === updated.id) {
+        this.selectedAccount.set(updated);
+        this.loadingTx.set(true);
+        this.accountSvc.getAccountTransactions(updated.id).subscribe(txs => {
+          this.transactions.set(txs);
+          this.loadingTx.set(false);
+        });
+      }
     });
   }
 

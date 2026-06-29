@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Client, IMessage } from '@stomp/stompjs';
 import { Subject } from 'rxjs';
 import { AuthService } from './auth.service';
-import { Notification, Account } from '../models';
+import { Notification, Account, Transaction } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class WebSocketService {
@@ -11,26 +11,32 @@ export class WebSocketService {
 
   readonly notification$ = new Subject<Notification>();
   readonly balance$ = new Subject<Account>();
+  readonly transaction$ = new Subject<Transaction>();
 
   connect(): void {
     if (this.client?.active) return;
-
-    const token = this.authSvc.getAccessToken();
-    if (!token) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const brokerURL = `${protocol}//${window.location.host}/ws`;
 
     this.client = new Client({
       brokerURL,
-      connectHeaders: { Authorization: `Bearer ${token}` },
       reconnectDelay: 5000,
+      beforeConnect: () => {
+        const freshToken = this.authSvc.getAccessToken();
+        if (freshToken && this.client) {
+          this.client.connectHeaders = { Authorization: `Bearer ${freshToken}` };
+        }
+      },
       onConnect: () => {
         this.client!.subscribe('/user/queue/notifications', (msg: IMessage) => {
           this.notification$.next(JSON.parse(msg.body));
         });
         this.client!.subscribe('/user/queue/balance', (msg: IMessage) => {
           this.balance$.next(JSON.parse(msg.body));
+        });
+        this.client!.subscribe('/user/queue/transaction', (msg: IMessage) => {
+          this.transaction$.next(JSON.parse(msg.body));
         });
       }
     });

@@ -27,6 +27,14 @@ export class AuthService {
     );
   }
 
+  refresh(): Observable<void> {
+    const refreshToken = localStorage.getItem('refreshToken');
+    return this.http.post<AuthResponse>('/api/auth/refresh', { refreshToken }).pipe(
+      tap(res => this.storeTokens(res)),
+      map(() => void 0)
+    );
+  }
+
   logout(): void {
     const accessToken = localStorage.getItem('accessToken');
     if (accessToken) {

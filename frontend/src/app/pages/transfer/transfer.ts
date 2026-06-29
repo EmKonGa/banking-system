@@ -12,6 +12,7 @@ import { Toast } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
 import { AccountService } from '../../core/services/account.service';
 import { PaymentService } from '../../core/services/payment.service';
+import { WebSocketService } from '../../core/services/websocket.service';
 import { Account, Transaction } from '../../core/models';
 
 @Component({
@@ -25,6 +26,7 @@ export class TransferPage implements OnInit {
   private fb = inject(FormBuilder);
   private accountSvc = inject(AccountService);
   private paymentSvc = inject(PaymentService);
+  private wsSvc = inject(WebSocketService);
   private msg = inject(MessageService);
 
   accounts = signal<Account[]>([]);
@@ -50,6 +52,16 @@ export class TransferPage implements OnInit {
     });
 
     this.loadTransactions();
+
+    this.wsSvc.balance$.subscribe(updated => {
+      this.accountOptions.update(opts =>
+        opts.map(o => o.value === updated.id
+          ? { ...o, label: `${updated.accountNumber} (${updated.type}) — $${updated.balance.toFixed(2)}` }
+          : o)
+      );
+      // Reload transactions when an incoming transfer is detected (receiver side)
+      this.loadTransactions();
+    });
   }
 
   loadTransactions(): void {
@@ -71,10 +83,10 @@ export class TransferPage implements OnInit {
       amount: amount!,
       description: description || undefined
     }).subscribe({
-      next: () => {
+      next: (tx) => {
         this.msg.add({ severity: 'success', summary: 'Transfer sent', detail: `$${amount} transferred successfully` });
+        this.transactions.update(list => [tx, ...list]);
         this.form.reset();
-        this.loadTransactions();
         this.submitting.set(false);
       },
       error: err => {
