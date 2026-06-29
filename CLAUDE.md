@@ -11,22 +11,22 @@ docker compose up -d
 
 **Run the application:**
 ```bash
-./mvnw spring-boot:run
+cd backend && ./mvnw spring-boot:run
 ```
 
 **Build (skip tests):**
 ```bash
-./mvnw package -DskipTests
+cd backend && ./mvnw package -DskipTests
 ```
 
 **Run all tests:**
 ```bash
-./mvnw test
+cd backend && ./mvnw test
 ```
 
 **Run a single test class:**
 ```bash
-./mvnw test -Dtest=ClassName
+cd backend && ./mvnw test -Dtest=ClassName
 ```
 
 **Environment setup:** Copy `.env.example` to `.env` before running Docker Compose. The app reads env vars with defaults baked into `application.yml`, so the `.env` file is only needed to override Docker Compose values.
