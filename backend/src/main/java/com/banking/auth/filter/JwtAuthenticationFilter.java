@@ -40,7 +40,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jti = jwtService.extractJti(token);
 
             // Reject blacklisted tokens (logged-out users)
-            if (Boolean.TRUE.equals(redis.hasKey("blacklist:" + jti))) {
+            if (redis.hasKey("blacklist:" + jti)) {
                 chain.doFilter(request, response);
                 return;
             }

@@ -11,6 +11,12 @@ export class AuthService {
   private router = inject(Router);
 
   private _isLoggedIn = signal(!!localStorage.getItem('accessToken'));
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    const existing = localStorage.getItem('accessToken');
+    if (existing) this.scheduleRefresh(existing);
+  }
   readonly isLoggedIn = this._isLoggedIn.asReadonly();
 
   login(req: LoginRequest): Observable<void> {
@@ -36,14 +42,30 @@ export class AuthService {
   }
 
   logout(): void {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     const accessToken = localStorage.getItem('accessToken');
-    if (accessToken) {
-      this.http.post('/api/auth/logout', { accessToken }).subscribe();
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (accessToken && refreshToken) {
+      this.http.post('/api/auth/logout',
+        { refreshToken },
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      ).subscribe();
     }
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     this._isLoggedIn.set(false);
     this.router.navigate(['/login']);
+  }
+
+  private scheduleRefresh(accessToken: string): void {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    try {
+      const payload = JSON.parse(atob(accessToken.split('.')[1]));
+      const refreshIn = payload.exp * 1000 - Date.now() - 60_000; // 1 min before expiry
+      if (refreshIn > 0) {
+        this.refreshTimer = setTimeout(() => this.refresh().subscribe(), refreshIn);
+      }
+    } catch { /* malformed token — skip */ }
   }
 
   getAccessToken(): string | null {
@@ -65,5 +87,6 @@ export class AuthService {
     localStorage.setItem('accessToken', res.accessToken);
     localStorage.setItem('refreshToken', res.refreshToken);
     this._isLoggedIn.set(true);
+    this.scheduleRefresh(res.accessToken);
   }
 }

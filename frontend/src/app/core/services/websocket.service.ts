@@ -38,7 +38,7 @@ export class WebSocketService {
         this.client!.subscribe('/user/queue/transaction', (msg: IMessage) => {
           this.transaction$.next(JSON.parse(msg.body));
         });
-      }
+      },
     });
 
     this.client.activate();

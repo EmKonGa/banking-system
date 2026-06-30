@@ -59,6 +59,27 @@ services:
       timeout: 10s
       retries: 5
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: banking_redisinsight
+    ports:
+      - "9001:5540"
+    depends_on:
+      - redis
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: banking_kafka_ui
+    ports:
+      - "9002:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      LOGGING_LEVEL_REACTOR_NETTY: ERROR
+      LOGGING_LEVEL_IO_NETTY: ERROR
+    depends_on:
+      - kafka
+
 volumes:
   oracle_data:
   redis_data:
