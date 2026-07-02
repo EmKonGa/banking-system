@@ -36,9 +36,15 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
                         String userId = ((User) userDetails).getId().toString();
                         accessor.setUser(() -> userId);
                         log.info("WebSocket authenticated: userId={}", userId);
+                    } else {
+                        log.warn("WebSocket auth failed: token invalid");
+                        throw new IllegalStateException("Unauthorized");
                     }
+                } catch (IllegalStateException e) {
+                    throw e;
                 } catch (Exception e) {
                     log.warn("WebSocket auth failed: {}", e.getMessage());
+                    throw new IllegalStateException("Unauthorized");
                 }
             }
         }

@@ -63,7 +63,7 @@ export class AuthService {
       const payload = JSON.parse(atob(accessToken.split('.')[1]));
       const refreshIn = payload.exp * 1000 - Date.now() - 60_000; // 1 min before expiry
       if (refreshIn > 0) {
-        this.refreshTimer = setTimeout(() => this.refresh().subscribe(), refreshIn);
+        this.refreshTimer = setTimeout(() => this.refresh().subscribe({ error: () => this.logout() }), refreshIn);
       }
     } catch { /* malformed token — skip */ }
   }

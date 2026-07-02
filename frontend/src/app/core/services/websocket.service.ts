@@ -39,6 +39,16 @@ export class WebSocketService {
           this.transaction$.next(JSON.parse(msg.body));
         });
       },
+      onStompError: (frame) => {
+        if (frame.headers['message']?.includes('Unauthorized')) {
+          this.client?.deactivate();
+          this.authSvc.logout();
+        }
+      },
+      onDisconnect: () => {
+        const token = this.authSvc.getAccessToken();
+        if (!token) this.authSvc.logout();
+      },
     });
 
     this.client.activate();
