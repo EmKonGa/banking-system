@@ -86,7 +86,7 @@ export class TransferPage implements OnInit {
       next: (tx) => {
         this.msg.add({ severity: 'success', summary: 'Transfer sent', detail: `$${amount} transferred successfully` });
         this.transactions.update(list => [tx, ...list]);
-        this.form.reset();
+        this.form.patchValue({ amount: null, description: '' });
         this.submitting.set(false);
       },
       error: err => {

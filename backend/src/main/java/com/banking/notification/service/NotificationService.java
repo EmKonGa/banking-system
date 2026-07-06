@@ -23,7 +23,7 @@ import java.util.UUID;
 public class NotificationService {
 
     private final NotificationRepository notificationRepository;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final NotificationPushService notificationPushService;
 
     public void create(UUID userId, String message, NotificationType type) {
         Notification saved = notificationRepository.save(Notification.builder()
@@ -36,11 +36,11 @@ public class NotificationService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    messagingTemplate.convertAndSendToUser(userId.toString(), "/queue/notifications", response);
+                    notificationPushService.push(userId, response);
                 }
             });
         } else {
-            messagingTemplate.convertAndSendToUser(userId.toString(), "/queue/notifications", response);
+            notificationPushService.push(userId, response);
         }
     }
 

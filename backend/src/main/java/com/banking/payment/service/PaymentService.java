@@ -7,27 +7,30 @@ import com.banking.account.repository.AccountRepository;
 import com.banking.common.exception.AppException;
 import com.banking.payment.dto.TransactionResponse;
 import com.banking.payment.dto.TransferRequest;
+import com.banking.payment.entity.OutboxEvent;
 import com.banking.payment.entity.Transaction;
 import com.banking.payment.entity.TransactionStatus;
 import com.banking.payment.entity.TransactionType;
+import com.banking.payment.event.PaymentCompletedEvent;
 import com.banking.payment.event.PaymentEvent;
+import com.banking.payment.repository.OutboxEventRepository;
 import com.banking.payment.repository.TransactionRepository;
 import com.banking.user.entity.User;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentService {
@@ -36,8 +39,9 @@ public class PaymentService {
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
-    private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final OutboxEventRepository outboxRepository;
+    private final ApplicationEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public TransactionResponse transfer(TransferRequest request) {
@@ -77,8 +81,8 @@ public class PaymentService {
                 .build();
         transactionRepository.save(tx);
 
-        // Snapshot values now (inside transaction) to use after commit
-        PaymentEvent event = new PaymentEvent(
+        // Build snapshots while still inside the transaction
+        PaymentEvent paymentEvent = new PaymentEvent(
                 tx.getId(),
                 from.getId(),
                 to.getId(),
@@ -90,24 +94,23 @@ public class PaymentService {
                 TransactionType.TRANSFER,
                 Instant.now()
         );
-        AccountResponse fromSnapshot = AccountResponse.from(from);
-        AccountResponse toSnapshot = AccountResponse.from(to);
-        String fromUserId = from.getUser().getId().toString();
-        String toUserId = to.getUser().getId().toString();
-        String txId = tx.getId().toString();
 
-        TransactionResponse txSnapshot = TransactionResponse.from(tx);
+        // Persist outbox event atomically with the transfer — guarantees at-least-once Kafka delivery
+        try {
+            String payload = objectMapper.writeValueAsString(paymentEvent);
+            outboxRepository.save(OutboxEvent.of(PAYMENT_TOPIC, tx.getId().toString(), payload));
+        } catch (JsonProcessingException e) {
+            throw new AppException("Failed to serialize payment event", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
 
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                kafkaTemplate.send(PAYMENT_TOPIC, txId, event);
-                messagingTemplate.convertAndSendToUser(fromUserId, "/queue/balance", fromSnapshot);
-                messagingTemplate.convertAndSendToUser(toUserId, "/queue/balance", toSnapshot);
-                messagingTemplate.convertAndSendToUser(fromUserId, "/queue/transaction", txSnapshot);
-                messagingTemplate.convertAndSendToUser(toUserId, "/queue/transaction", txSnapshot);
-            }
-        });
+        // Fire Spring event for WebSocket balance/transaction push (best-effort, after commit)
+        eventPublisher.publishEvent(new PaymentCompletedEvent(
+                from.getUser().getId().toString(),
+                to.getUser().getId().toString(),
+                AccountResponse.from(from),
+                AccountResponse.from(to),
+                TransactionResponse.from(tx)
+        ));
 
         return TransactionResponse.from(tx);
     }
@@ -119,7 +122,6 @@ public class PaymentService {
     }
 
     public List<TransactionResponse> transactionsByAccount(UUID accountId) {
-        // Caller must verify ownership before calling
         return transactionRepository.findByAccountId(accountId).stream()
                 .map(TransactionResponse::from)
                 .toList();

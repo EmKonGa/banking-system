@@ -2,12 +2,12 @@ package com.banking.auth.filter;
 
 import com.banking.auth.service.CustomUserDetailsService;
 import com.banking.auth.service.JwtService;
+import com.banking.auth.service.TokenBlacklistService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -23,7 +23,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
-    private final StringRedisTemplate redis;
+    private final TokenBlacklistService tokenBlacklistService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -40,7 +40,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String jti = jwtService.extractJti(token);
 
             // Reject blacklisted tokens (logged-out users)
-            if (redis.hasKey("blacklist:" + jti)) {
+            if (tokenBlacklistService.isBlacklisted(jti)) {
                 chain.doFilter(request, response);
                 return;
             }

@@ -6,7 +6,6 @@ import com.banking.user.entity.Role;
 import com.banking.user.entity.User;
 import com.banking.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -27,7 +26,7 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
-    private final StringRedisTemplate redis;
+    private final TokenBlacklistService tokenBlacklistService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -70,7 +69,7 @@ public class AuthService {
         Date expiration = jwtService.extractExpiration(accessToken);
         long ttlMs = expiration.getTime() - System.currentTimeMillis();
         if (ttlMs > 0) {
-            redis.opsForValue().set("blacklist:" + jti, "true", Duration.ofMillis(ttlMs));
+            tokenBlacklistService.blacklistToken(jti, Duration.ofMillis(ttlMs));
         }
         // Invalidate the refresh token
         refreshTokenService.delete(refreshToken);
