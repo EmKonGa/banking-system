@@ -59,6 +59,130 @@ services:
       timeout: 10s
       retries: 5
 
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    container_name: banking_gateway
+    ports:
+      - "8080:8080"
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:8081
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      account-service:
+        condition: service_started
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
+    container_name: banking_auth
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      ORACLE_USER: ${ORACLE_USER:-banking_user}
+      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  account-service:
+    build:
+      context: .
+      dockerfile: account-service/Dockerfile
+    container_name: banking_account
+    ports:
+      - "8082:8082"
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      ORACLE_USER: ${ORACLE_USER:-banking_user}
+      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-internal-secret-change-me}
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    container_name: banking_payment
+    ports:
+      - "8083:8083"
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      ORACLE_USER: ${ORACLE_USER:-banking_user}
+      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-internal-secret-change-me}
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      account-service:
+        condition: service_started
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: banking_notification
+    ports:
+      - "8084:8084"
+    environment:
+      DB_HOST: oracle
+      DB_PORT: 1521
+      ORACLE_USER: ${ORACLE_USER:-banking_user}
+      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
   redisinsight:
     image: redis/redisinsight:latest
     container_name: banking_redisinsight
@@ -87,8 +211,6 @@ services:
       - "9090:9090"
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   tempo:
     image: grafana/tempo:2.6.1
