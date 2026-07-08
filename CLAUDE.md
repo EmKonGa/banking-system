@@ -4,63 +4,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-**Start infrastructure (required before running the app):**
+**Start everything (infrastructure + all services) via Docker:**
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-**Run the application:**
-```bash
-cd backend && ./mvnw spring-boot:run
-```
+> Copy `.env.example` to `.env` before the first run. Maven runs inside Docker via multi-stage builds — no local Java/Maven required. All env vars have defaults baked into each service's `application.yml`.
 
-**Build (skip tests):**
+**Run a single service locally** (requires Java 21 + Maven; infrastructure must already be running via Docker):
 ```bash
-cd backend && ./mvnw package -DskipTests
+cd auth-service && ../mvnw spring-boot:run
 ```
 
 **Run all tests:**
 ```bash
-cd backend && ./mvnw test
+./mvnw test
 ```
 
 **Run a single test class:**
 ```bash
-cd backend && ./mvnw test -Dtest=ClassName
+./mvnw test -Dtest=ClassName -pl <module-name>
 ```
-
-**Environment setup:** Copy `.env.example` to `.env` before running Docker Compose. The app reads env vars with defaults baked into `application.yml`, so the `.env` file is only needed to override Docker Compose values.
 
 ## Architecture
 
-This is a Spring Boot 3.3 / Java 21 monolith organized into feature packages under `com.banking`. Each module is self-contained with its own `controller`, `service`, `dto`, `entity`, and `repository` sub-packages.
+Spring Boot 3.3 / Java 21 microservices. All external traffic enters through the **API Gateway** (port 8080); individual services are not meant to be called directly by clients.
 
-| Package | Responsibility |
-|---|---|
-| `auth` | JWT login/register/refresh/logout, Spring Security config |
-| `user` | `User` entity (implements `UserDetails`), role management |
-| `account` | Bank accounts, balances, per-account transaction history |
-| `payment` | Transfers, transaction ledger, Kafka producer |
-| `notification` | Kafka consumer, per-user notification inbox |
-| `common` | Shared `AppException` + `GlobalExceptionHandler` |
+### Modules
 
-## API Endpoints
-
-| Method | Path | Description |
+| Module | Package | Responsibility |
 |---|---|---|
-| POST | `/api/auth/register` | Register, returns token pair |
-| POST | `/api/auth/login` | Login, returns token pair |
-| POST | `/api/auth/refresh` | Rotate refresh token |
-| POST | `/api/auth/logout` | Blacklist access + delete refresh token |
-| POST | `/api/accounts` | Create account (`{"type":"SAVINGS"\|"CHECKING"}`) |
-| GET | `/api/accounts` | List authenticated user's accounts |
-| GET | `/api/accounts/{id}` | Get single account |
-| GET | `/api/accounts/{id}/transactions` | Transactions for one account |
-| POST | `/api/payments/transfer` | Transfer between accounts |
-| GET | `/api/payments/transactions` | All transactions for current user |
-| GET | `/api/notifications` | Notification inbox |
-| PATCH | `/api/notifications/{id}/read` | Mark one notification read |
-| PATCH | `/api/notifications/read-all` | Mark all notifications read |
+| `api-gateway` | `com.banking.gateway` | Spring Cloud Gateway: JWT validation, routing, blocks internal paths from external callers |
+| `auth-service` | `com.banking.auth` | Register/login/refresh/logout, JWT issuance, token blacklist (Redis) |
+| `account-service` | `com.banking.account` | Bank accounts, balances, transfer logs; calls payment-service via Feign |
+| `payment-service` | `com.banking.payment` | Transfers, transaction ledger, Transactional Outbox → Kafka; calls account-service via Feign |
+| `notification-service` | `com.banking.notification` | Kafka consumer, per-user notification inbox, WebSocket push |
+| `banking-common` | `com.banking.common` | Shared `AppException` + `GlobalExceptionHandler` |
+| `banking-events` | `com.banking.events` | Shared Kafka event DTOs (e.g. `PaymentEvent`) used by producer and consumer |
+
+### Service Communication
+
+- **Sync (Feign):** `account-service` → `payment-service` (fetch transactions); `payment-service` → `account-service` (balance checks/updates)
+- **Async (Kafka):** `payment-service` publishes events via Transactional Outbox → `OutboxPoller` → Kafka → `notification-service` consumes
+- **Internal auth:** service-to-service calls on `/internal/**` paths use a shared `X-Internal-Secret` header; the API Gateway blocks these paths from external access
+
+## API Endpoints (all via gateway on port 8080)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/auth/register` | Public | Register, returns token pair |
+| POST | `/api/auth/login` | Public | Login, returns token pair |
+| POST | `/api/auth/refresh` | Public | Rotate refresh token |
+| POST | `/api/auth/logout` | JWT | Blacklist access + delete refresh token |
+| POST | `/api/accounts` | JWT | Create account (`{"type":"SAVINGS"\|"CHECKING"}`) |
+| GET | `/api/accounts` | JWT | List authenticated user's accounts |
+| GET | `/api/accounts/{id}` | JWT | Get single account |
+| GET | `/api/accounts/{id}/transactions` | JWT | Transactions for one account |
+| POST | `/api/payments/transfer` | JWT | Transfer between accounts |
+| GET | `/api/payments/transactions` | JWT | All transactions for current user |
+| GET | `/api/notifications` | JWT | Notification inbox |
+| PATCH | `/api/notifications/{id}/read` | JWT | Mark one notification read |
+| PATCH | `/api/notifications/read-all` | JWT | Mark all notifications read |
+| WS | `/ws/**` | (auth in handshake) | WebSocket for real-time notifications |
 
 ## Auth Flow
 
@@ -69,25 +74,38 @@ Stateless JWT-based auth with two-token strategy:
 - **Access token** (15 min): signed HS256 JWT; carries `jti` (UUID) for blacklisting and `sub` (email).
 - **Refresh token** (7 days): opaque UUID stored in Redis under `refresh:<token>` → `userId`.
 
-**Logout** blacklists the access token's `jti` in Redis (`blacklist:<jti>`) for its remaining TTL, and deletes the refresh token key. `JwtAuthenticationFilter` checks this blacklist on every request before authenticating.
+JWT validation happens **at the gateway** (`JwtAuthGatewayFilter`). The gateway checks the Redis blacklist on every request and forwards the JWT to downstream services. Individual services also validate JWTs for their own security config.
 
-**Refresh rotation**: old refresh token is deleted and a new one is issued atomically in `RefreshTokenService.rotate()`.
+**Logout** blacklists the access token's `jti` in Redis (`blacklist:<jti>`) for its remaining TTL, and deletes the refresh token key.
 
-`AppProperties` (`@ConfigurationProperties(prefix = "app.jwt")`) is the single source of truth for JWT secret and expiration values.
+**Refresh rotation**: old refresh token is deleted and a new one issued atomically in `RefreshTokenService.rotate()`.
 
 ## Key Design Decisions
 
-- `User` implements `UserDetails` directly — no separate `UserDetailsAdapter` wrapper.
-- `GlobalExceptionHandler` centralizes error responses: `AppException` → typed HTTP status, `BadCredentialsException` → 401, `MethodArgumentNotValidException` → field-keyed map.
-- Public endpoints: `/api/auth/**` and `/actuator/health`. Everything else requires a valid JWT.
-- Kafka runs in KRaft mode (no Zookeeper). External port is `9094`; internal broker-to-broker uses `9092`.
-- `spring.jpa.hibernate.ddl-auto=update` — schema is managed by Hibernate auto-DDL during development.
+- **Shared JWT secret**: all services share the same `JWT_SECRET` env var so any service can verify tokens independently without calling auth-service.
+- **Transactional Outbox**: payment-service writes `OutboxEvent` rows in the same DB transaction as the transfer; `OutboxPoller` publishes them to Kafka asynchronously, guaranteeing at-least-once delivery.
+- **Resilience4j** circuit breakers and retries on Redis, Kafka, and inter-service Feign calls in every service.
+- **`User` implements `UserDetails`** directly — no separate adapter wrapper.
+- **`GlobalExceptionHandler`** centralizes error responses: `AppException` → typed HTTP status, `BadCredentialsException` → 401, `MethodArgumentNotValidException` → field-keyed map.
+- `spring.jpa.hibernate.ddl-auto=update` — schema managed by Hibernate auto-DDL in development.
+- Kafka runs in KRaft mode (no Zookeeper). External port `9094`; internal broker port `9092`.
 
 ## Infrastructure Ports
 
 | Service | Host port |
 |---|---|
+| API Gateway | 8080 |
+| auth-service | 8081 |
+| account-service | 8082 |
+| payment-service | 8083 |
+| notification-service | 8084 |
 | PostgreSQL | 5432 |
 | Redis | 6379 |
 | Kafka (external) | 9094 |
-| App | 8080 (default) |
+| RedisInsight UI | 9001 |
+| Kafka UI | 9002 |
+| Prometheus | 9090 |
+| Grafana | 3000 |
+| Tempo (gRPC) | 4317 |
+| Tempo (HTTP) | 4318 |
+| Tempo (query) | 3200 |

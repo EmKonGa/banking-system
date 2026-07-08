@@ -1,22 +1,21 @@
 services:
 
-  oracle:
-    image: gvenzl/oracle-xe:21-slim
-    container_name: banking_oracle
+  postgres:
+    image: postgres:16-alpine
+    container_name: banking_postgres
     environment:
-      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-banking_pass}
-      APP_USER: ${ORACLE_USER:-banking_user}
-      APP_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      POSTGRES_USER: ${DB_USER:-banking_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-banking_pass}
+      POSTGRES_DB: banking_db
     ports:
-      - "1522:1521"
+      - "5432:5432"
     volumes:
-      - oracle_data:/opt/oracle/oradata
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "healthcheck.sh"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 3m
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-banking_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -54,10 +53,11 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
       interval: 15s
       timeout: 10s
       retries: 5
+      start_period: 30s
 
   api-gateway:
     build:
@@ -79,9 +79,9 @@ services:
       redis:
         condition: service_healthy
       auth-service:
-        condition: service_started
+        condition: service_healthy
       account-service:
-        condition: service_started
+        condition: service_healthy
 
   auth-service:
     build:
@@ -91,16 +91,22 @@ services:
     ports:
       - "8081:8081"
     environment:
-      DB_HOST: oracle
-      DB_PORT: 1521
-      ORACLE_USER: ${ORACLE_USER:-banking_user}
-      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-banking_user}
+      DB_PASSWORD: ${DB_PASSWORD:-banking_pass}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
       OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     depends_on:
-      oracle:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -113,18 +119,24 @@ services:
     ports:
       - "8082:8082"
     environment:
-      DB_HOST: oracle
-      DB_PORT: 1521
-      ORACLE_USER: ${ORACLE_USER:-banking_user}
-      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-banking_user}
+      DB_PASSWORD: ${DB_PASSWORD:-banking_pass}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-internal-secret-change-me}
       PAYMENT_SERVICE_URL: http://payment-service:8083
       OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     depends_on:
-      oracle:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -137,10 +149,10 @@ services:
     ports:
       - "8083:8083"
     environment:
-      DB_HOST: oracle
-      DB_PORT: 1521
-      ORACLE_USER: ${ORACLE_USER:-banking_user}
-      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-banking_user}
+      DB_PASSWORD: ${DB_PASSWORD:-banking_pass}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -148,15 +160,21 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-internal-secret-change-me}
       ACCOUNT_SERVICE_URL: http://account-service:8082
       OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     depends_on:
-      oracle:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
       account-service:
-        condition: service_started
+        condition: service_healthy
 
   notification-service:
     build:
@@ -166,43 +184,49 @@ services:
     ports:
       - "8084:8084"
     environment:
-      DB_HOST: oracle
-      DB_PORT: 1521
-      ORACLE_USER: ${ORACLE_USER:-banking_user}
-      ORACLE_USER_PASSWORD: ${ORACLE_USER_PASSWORD:-banking_pass}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-banking_user}
+      DB_PASSWORD: ${DB_PASSWORD:-banking_pass}
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
       OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8084/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     depends_on:
-      oracle:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
 
-  redisinsight:
-    image: redis/redisinsight:latest
-    container_name: banking_redisinsight
-    ports:
-      - "9001:5540"
-    depends_on:
-      - redis
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: banking_kafka_ui
-    ports:
-      - "9002:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      LOGGING_LEVEL_REACTOR_NETTY: ERROR
-      LOGGING_LEVEL_IO_NETTY: ERROR
-    depends_on:
-      - kafka
+#  redisinsight:
+#    image: redis/redisinsight:latest
+#    container_name: banking_redisinsight
+#    ports:
+#      - "9001:5540"
+#    depends_on:
+#      - redis
+#
+#  kafka-ui:
+#    image: provectuslabs/kafka-ui:latest
+#    container_name: banking_kafka_ui
+#    ports:
+#      - "9002:8080"
+#    environment:
+#      KAFKA_CLUSTERS_0_NAME: local
+#      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+#      LOGGING_LEVEL_REACTOR_NETTY: ERROR
+#      LOGGING_LEVEL_IO_NETTY: ERROR
+#    depends_on:
+#      - kafka
 
   prometheus:
     image: prom/prometheus:latest
@@ -240,7 +264,7 @@ services:
       - tempo
 
 volumes:
-  oracle_data:
+  postgres_data:
   redis_data:
   kafka_data:
   tempo_data:

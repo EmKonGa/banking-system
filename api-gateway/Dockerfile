@@ -1,20 +1,24 @@
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-21 AS shared
+ENV MAVEN_OPTS="-Daether.connector.https.securityMode=insecure -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true"
 WORKDIR /workspace
-
 COPY pom.xml .
 COPY banking-events/pom.xml banking-events/
 COPY banking-common/pom.xml banking-common/
-COPY backend/pom.xml backend/
 COPY auth-service/pom.xml auth-service/
 COPY api-gateway/pom.xml api-gateway/
+COPY account-service/pom.xml account-service/
+COPY payment-service/pom.xml payment-service/
+COPY notification-service/pom.xml notification-service/
+COPY banking-events/src banking-events/src
+COPY banking-common/src banking-common/src
+RUN mvn install -pl banking-events,banking-common -DskipTests -q
 
-RUN mvn dependency:go-offline -pl api-gateway -am -q
-
+FROM shared AS build
 COPY api-gateway/src api-gateway/src
-
-RUN mvn package -pl api-gateway -am -DskipTests -q
+RUN mvn package -pl banking-events,banking-common,api-gateway -DskipTests
 
 FROM eclipse-temurin:21-jre-jammy
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /workspace/api-gateway/target/api-gateway-*.jar app.jar
 EXPOSE 8080

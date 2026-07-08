@@ -12,7 +12,7 @@ public class FeignConfig {
     private String internalSecret;
 
     @Bean
-    public RequestInterceptor internalSecretInterceptor() {
+    public RequestInterceptor internalSecretFeignInterceptor() {
         return template -> template.header("X-Internal-Secret", internalSecret);
     }
 }
