@@ -30,29 +30,8 @@ public class InternalAccountController {
     }
 
     private TransferExecutionResult doTransfer(TransferExecutionRequest request) {
-        // Load destination without lock first to get its ID for consistent lock ordering
-        Account to = accountRepository.findByAccountNumber(request.toAccountNumber())
-                .orElseThrow(() -> new AppException("Destination account not found", HttpStatus.NOT_FOUND));
-
-        if (request.fromAccountId().equals(to.getId())) {
-            throw new AppException("Cannot transfer to the same account", HttpStatus.BAD_REQUEST);
-        }
-
-        // Lock both accounts in ascending UUID order to prevent deadlocks.
-        // Without ordering: Transfer A locks account-1 then account-2 while
-        // Transfer B locks account-2 then account-1 → deadlock.
-        Account from;
-        if (request.fromAccountId().compareTo(to.getId()) < 0) {
-            from = accountRepository.findByIdWithLock(request.fromAccountId())
-                    .orElseThrow(() -> new AppException("Source account not found", HttpStatus.NOT_FOUND));
-            to = accountRepository.findByIdWithLock(to.getId())
-                    .orElseThrow(() -> new AppException("Destination account not found", HttpStatus.NOT_FOUND));
-        } else {
-            to = accountRepository.findByIdWithLock(to.getId())
-                    .orElseThrow(() -> new AppException("Destination account not found", HttpStatus.NOT_FOUND));
-            from = accountRepository.findByIdWithLock(request.fromAccountId())
-                    .orElseThrow(() -> new AppException("Source account not found", HttpStatus.NOT_FOUND));
-        }
+        Account from = accountRepository.findById(request.fromAccountId())
+                .orElseThrow(() -> new AppException("Source account not found", HttpStatus.NOT_FOUND));
 
         if (!from.getUserId().equals(request.fromUserId())) {
             throw new AppException("Source account not found", HttpStatus.NOT_FOUND);
@@ -60,15 +39,29 @@ public class InternalAccountController {
         if (from.getStatus() != AccountStatus.ACTIVE) {
             throw new AppException("Source account is not active", HttpStatus.BAD_REQUEST);
         }
+
+        Account to = accountRepository.findByAccountNumber(request.toAccountNumber())
+                .orElseThrow(() -> new AppException("Destination account not found", HttpStatus.NOT_FOUND));
+
+        if (from.getId().equals(to.getId())) {
+            throw new AppException("Cannot transfer to the same account", HttpStatus.BAD_REQUEST);
+        }
         if (to.getStatus() != AccountStatus.ACTIVE) {
             throw new AppException("Destination account is not active", HttpStatus.BAD_REQUEST);
         }
-        if (from.getBalance().compareTo(request.amount()) < 0) {
+
+        // Atomic debit: the WHERE balance >= :amount clause makes the balance check and
+        // deduction one DB operation — concurrent transfers cannot both pass on the same account.
+        int debited = accountRepository.deductBalance(from.getId(), request.amount());
+        if (debited == 0) {
             throw new AppException("Insufficient balance", HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
-        from.setBalance(from.getBalance().subtract(request.amount()));
-        to.setBalance(to.getBalance().add(request.amount()));
+        accountRepository.addBalance(to.getId(), request.amount());
+
+        // Reload to get committed balances after the bulk updates (clearAutomatically flushes the cache).
+        from = accountRepository.findById(from.getId()).orElseThrow();
+        to = accountRepository.findById(to.getId()).orElseThrow();
 
         transferLogRepository.save(AccountTransferLog.builder()
                 .idempotencyKey(request.idempotencyKey())
