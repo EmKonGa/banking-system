@@ -1,7 +1,6 @@
 package com.banking.payment.repository;
 
 import com.banking.payment.entity.OutboxEvent;
-import com.banking.payment.entity.OutboxStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
@@ -9,7 +8,6 @@ import java.util.List;
 import java.util.UUID;
 
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
-    List<OutboxEvent> findTop10ByStatusOrderByCreatedAtAsc(OutboxStatus status);
 
     // FOR UPDATE SKIP LOCKED ensures each payment-service instance claims its own
     // batch of rows — concurrent instances never process the same outbox event.
