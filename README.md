@@ -41,8 +41,9 @@ All client traffic enters through the **API Gateway** on port 8080. Services com
 
 ```mermaid
 flowchart TD
-    Client -->|REST| GW["API Gateway :8080\nJWT validation · routing"]
+    FE["Angular Frontend :4200"] -->|REST + WebSocket| GW
 
+    GW["API Gateway :8080\nJWT validation · routing"]
     GW --> AUTH["auth-service :8081\nregister · login · refresh · logout"]
     GW --> ACC["account-service :8082\naccounts · balances"]
     GW --> PAY["payment-service :8083\ntransfers · ledger"]
@@ -51,12 +52,21 @@ flowchart TD
     ACC <-->|Feign sync| PAY
     PAY -->|Transactional Outbox| KAFKA[("Kafka :9094")]
     KAFKA -->|consume| NOTIF
-    NOTIF -->|WebSocket push| Client
+    NOTIF -->|WebSocket push| FE
 
-    AUTH & ACC & PAY & NOTIF --> PG[("PostgreSQL :5432\nper-service schemas · Flyway")]
+    AUTH --> PG_AUTH[("banking_auth")]
+    ACC  --> PG_ACC[("banking_account")]
+    PAY  --> PG_PAY[("banking_payment")]
+    NOTIF --> PG_NOTIF[("banking_notification")]
+
+    subgraph PG ["PostgreSQL :5432  ·  Flyway migrations"]
+        PG_AUTH
+        PG_ACC
+        PG_PAY
+        PG_NOTIF
+    end
+
     GW & AUTH & NOTIF --> REDIS[("Redis :6379\ntoken blacklist · refresh tokens")]
-
-    FE["Angular Frontend\n:4200"] -->|REST + WebSocket| GW
 ```
 
 ### Modules
