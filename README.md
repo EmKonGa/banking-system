@@ -6,23 +6,29 @@ A Spring Boot 3.3 / Java 21 microservices banking platform — account managemen
 
 - **JWT Authentication** — stateless two-token strategy (access + refresh) with Redis-backed blacklisting and token rotation
 - **API Gateway** — single entry point with JWT validation, routing, and internal path blocking
-- **Account Management** — create and manage SAVINGS / CHECKING accounts
-- **Payments** — fund transfers with Transactional Outbox pattern for guaranteed at-least-once Kafka delivery
-- **Real-time Notifications** — Kafka-driven inbox with WebSocket push
+- **Account Management** — create and manage SAVINGS / CHECKING accounts with atomic balance updates
+- **Payments** — fund transfers with Transactional Outbox pattern for guaranteed at-least-once Kafka delivery; paginated transaction history
+- **Real-time Notifications** — Kafka-driven inbox with WebSocket push; paginated notification list
+- **Database Migrations** — Flyway-managed schema per service (banking_auth, banking_account, banking_payment, banking_notification)
 - **Fault Tolerance** — Resilience4j circuit breakers and retries on all inter-service and Redis/Kafka calls
 - **Observability** — Prometheus metrics, Grafana dashboards, distributed tracing via Tempo (OpenTelemetry)
+- **Angular Frontend** — SPA with JWT-aware HTTP client, real-time WebSocket notifications, and account/transfer UI
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
+| Layer | Technology |
+|---|---|
 | Runtime | Java 21 |
 | Framework | Spring Boot 3.3 |
+| Frontend | Angular 18 |
 | Gateway | Spring Cloud Gateway |
 | Security | Spring Security + JWT (HS256) |
 | Service Communication | OpenFeign (sync), Apache Kafka (async) |
 | Fault Tolerance | Resilience4j |
-| Database | PostgreSQL |
+| Database | PostgreSQL (per-service schema, Flyway migrations) |
+| Connection Pool | HikariCP |
 | Cache / Token store | Redis |
 | Messaging | Apache Kafka (KRaft mode) |
 | Build | Maven (multi-module) |
@@ -47,8 +53,10 @@ flowchart TD
     KAFKA -->|consume| NOTIF
     NOTIF -->|WebSocket push| Client
 
-    AUTH & ACC & PAY & NOTIF --> PG[("PostgreSQL :5432")]
+    AUTH & ACC & PAY & NOTIF --> PG[("PostgreSQL :5432\nper-service schemas · Flyway")]
     GW & AUTH & NOTIF --> REDIS[("Redis :6379\ntoken blacklist · refresh tokens")]
+
+    FE["Angular Frontend\n:4200"] -->|REST + WebSocket| GW
 ```
 
 ### Modules
@@ -68,16 +76,16 @@ flowchart TD
 ### Prerequisites
 
 - Docker & Docker Compose
-- Java 21+
-- Maven 3.9+
+- Java 21+ and Maven 3.9+ (only needed to run services locally)
+- Node.js 20+ (only needed to run the frontend locally)
 
-### Run
+### Run (backend)
 
 ```bash
 # 1. Configure environment
 cp .env.example .env
 
-# 2. Build images and start everything (Maven runs inside Docker)
+# 2. Build images and start all backend services (Maven runs inside Docker)
 docker compose up -d --build
 ```
 
@@ -87,6 +95,14 @@ The API is available at `http://localhost:8080`.
 
 ```bash
 cd auth-service && ../mvnw spring-boot:run
+```
+
+### Run (frontend)
+
+```bash
+cd frontend
+npm install
+npm start        # serves at http://localhost:4200
 ```
 
 ## API Reference
@@ -109,20 +125,22 @@ All endpoints are accessed through the gateway at `http://localhost:8080`. Endpo
 | POST | `/api/accounts` | JWT | Create account (`{"type":"SAVINGS"` or `"CHECKING"}`) |
 | GET | `/api/accounts` | JWT | List authenticated user's accounts |
 | GET | `/api/accounts/{id}` | JWT | Get single account |
-| GET | `/api/accounts/{id}/transactions` | JWT | Transactions for one account |
+| GET | `/api/accounts/{id}/transactions` | JWT | Paginated transactions for one account |
 
 ### Payments
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/payments/transfer` | JWT | Transfer between accounts |
-| GET | `/api/payments/transactions` | JWT | All transactions for current user |
+| GET | `/api/payments/transactions` | JWT | Paginated transactions for current user |
+
+> Paginated endpoints return a Spring `Page<T>` envelope (`content`, `totalElements`, `totalPages`, etc.). Default page size: 20, max: 100. Add `?page=0&size=20` to control paging.
 
 ### Notifications
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/notifications` | JWT | Notification inbox |
+| GET | `/api/notifications` | JWT | Paginated notification inbox |
 | PATCH | `/api/notifications/{id}/read` | JWT | Mark one notification read |
 | PATCH | `/api/notifications/read-all` | JWT | Mark all notifications read |
 | WS | `/ws/**` | Handshake | WebSocket for real-time push |
@@ -156,6 +174,7 @@ banking-system/
 ├── notification-service/  # Kafka consumer, WebSocket push
 ├── banking-common/        # AppException, GlobalExceptionHandler
 ├── banking-events/        # Shared Kafka event DTOs
+├── frontend/              # Angular 18 SPA
 ├── observability/         # Prometheus, Tempo, Grafana config
 └── docker-compose.yml
 ```
