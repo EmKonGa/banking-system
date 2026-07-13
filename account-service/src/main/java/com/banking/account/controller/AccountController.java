@@ -7,6 +7,9 @@ import com.banking.account.dto.TransactionResponse;
 import com.banking.account.service.AccountService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -57,8 +60,10 @@ public class AccountController {
     }
 
     @GetMapping("/{id}/transactions")
-    public ResponseEntity<List<TransactionResponse>> transactions(@PathVariable UUID id) {
+    public ResponseEntity<Page<TransactionResponse>> transactions(
+            @PathVariable UUID id,
+            @PageableDefault(size = 20) Pageable pageable) {
         accountService.findOwnedAccount(id);
-        return ResponseEntity.ok(accountService.transactionsByAccount(id));
+        return ResponseEntity.ok(accountService.transactionsByAccount(id, pageable));
     }
 }

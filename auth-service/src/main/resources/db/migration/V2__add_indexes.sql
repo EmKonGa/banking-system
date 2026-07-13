@@ -1,0 +1,1 @@
+-- email UNIQUE constraint already creates an index for login lookups; nothing more needed.

@@ -4,10 +4,11 @@ import com.banking.account.config.FeignConfig;
 import com.banking.account.dto.TransactionResponse;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 
-import java.util.List;
 import java.util.UUID;
 
 @FeignClient(
@@ -19,9 +20,9 @@ public interface PaymentServiceClient {
 
     @GetMapping("/internal/payments/transactions/by-account/{accountId}")
     @CircuitBreaker(name = "payment-service", fallbackMethod = "transactionsByAccountFallback")
-    List<TransactionResponse> transactionsByAccount(@PathVariable UUID accountId);
+    Page<TransactionResponse> transactionsByAccount(@PathVariable UUID accountId, Pageable pageable);
 
-    default List<TransactionResponse> transactionsByAccountFallback(UUID accountId, Throwable t) {
-        return List.of();
+    default Page<TransactionResponse> transactionsByAccountFallback(UUID accountId, Pageable pageable, Throwable t) {
+        return Page.empty();
     }
 }

@@ -1,6 +1,7 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { Transaction, TransferRequest } from '../models';
 
 @Injectable({ providedIn: 'root' })
@@ -12,6 +13,8 @@ export class PaymentService {
   }
 
   getTransactions(): Observable<Transaction[]> {
-    return this.http.get<Transaction[]>('/api/payments/transactions');
+    return this.http.get<{ content: Transaction[] }>('/api/payments/transactions').pipe(
+      map(page => page.content)
+    );
   }
 }

@@ -7,11 +7,24 @@ spring:
     username: ${DB_USER:banking_user}
     password: ${DB_PASSWORD:banking_pass}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  flyway:
+    schemas: banking_notification
+    default-schema: banking_notification
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
+    properties:
+      hibernate:
+        default_schema: banking_notification
 
   data:
     redis:
@@ -36,6 +49,12 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.banking.events"
+
+  data:
+    web:
+      pageable:
+        max-page-size: 100
+        default-page-size: 20
 
 server:
   port: 8084

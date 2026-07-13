@@ -25,8 +25,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -101,18 +103,14 @@ public class PaymentService {
         return TransactionResponse.from(tx);
     }
 
-    public List<TransactionResponse> myTransactions() {
-        return transactionRepository.findByUserId(currentPrincipal().id())
-                .stream()
-                .map(TransactionResponse::from)
-                .toList();
+    public Page<TransactionResponse> myTransactions(Pageable pageable) {
+        return transactionRepository.findByUserId(currentPrincipal().id(), pageable)
+                .map(TransactionResponse::from);
     }
 
-    public List<TransactionResponse> transactionsByAccount(UUID accountId) {
-        return transactionRepository.findByAccountId(accountId)
-                .stream()
-                .map(TransactionResponse::from)
-                .toList();
+    public Page<TransactionResponse> transactionsByAccount(UUID accountId, Pageable pageable) {
+        return transactionRepository.findByAccountId(accountId, pageable)
+                .map(TransactionResponse::from);
     }
 
     private JwtPrincipal currentPrincipal() {

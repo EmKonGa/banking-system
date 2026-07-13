@@ -1,6 +1,7 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { Notification } from '../models';
 
 @Injectable({ providedIn: 'root' })
@@ -10,7 +11,8 @@ export class NotificationService {
   readonly unreadCount = signal(0);
 
   getNotifications(): Observable<Notification[]> {
-    return this.http.get<Notification[]>('/api/notifications').pipe(
+    return this.http.get<{ content: Notification[] }>('/api/notifications').pipe(
+      map(page => page.content),
       tap(list => this.unreadCount.set(list.filter(n => !n.read).length))
     );
   }

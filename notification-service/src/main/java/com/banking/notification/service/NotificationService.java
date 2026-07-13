@@ -14,7 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.util.UUID;
 
 @Service
@@ -43,11 +45,9 @@ public class NotificationService {
         }
     }
 
-    public List<NotificationResponse> myNotifications() {
-        return notificationRepository.findByUserIdOrderByCreatedAtDesc(currentUserId())
-                .stream()
-                .map(NotificationResponse::from)
-                .toList();
+    public Page<NotificationResponse> myNotifications(Pageable pageable) {
+        return notificationRepository.findByUserIdOrderByCreatedAtDesc(currentUserId(), pageable)
+                .map(NotificationResponse::from);
     }
 
     @Transactional
