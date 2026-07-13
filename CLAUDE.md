@@ -13,7 +13,8 @@ docker compose up -d --build
 
 **Run a single service locally** (requires Java 21 + Maven; infrastructure must already be running via Docker):
 ```bash
-cd auth-service && ../mvnw spring-boot:run
+# Replace <service> with auth-service, account-service, payment-service, or notification-service
+mvn spring-boot:run -pl <service>
 ```
 
 **Run all tests:**

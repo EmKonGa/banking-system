@@ -104,7 +104,8 @@ The API is available at `http://localhost:8080`.
 **To run a single service locally** (infrastructure must be running via Docker first):
 
 ```bash
-cd auth-service && ../mvnw spring-boot:run
+# Replace <service> with auth-service, account-service, payment-service, or notification-service
+mvn spring-boot:run -pl <service>
 ```
 
 ### Run (frontend)
