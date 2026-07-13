@@ -33,9 +33,12 @@ export class DashboardPage implements OnInit {
       this.accounts.set(accounts);
     });
 
-    this.paymentSvc.getTransactions().subscribe(txs => {
-      this.recentTransactions.set(txs.slice(0, 5));
-      this.loading.set(false);
+    this.paymentSvc.getTransactions().subscribe({
+      next: txs => {
+        this.recentTransactions.set(txs.slice(0, 5));
+        this.loading.set(false);
+      },
+      error: () => this.loading.set(false)
     });
   }
 

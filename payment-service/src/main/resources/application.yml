@@ -49,6 +49,11 @@ app:
 internal:
   secret: ${INTERNAL_SECRET:internal-secret-change-me}
 
+outbox:
+  poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:15000}
+  max-retries: ${OUTBOX_MAX_RETRIES:5}
+  base-backoff-seconds: ${OUTBOX_BASE_BACKOFF_SECONDS:15}
+
 services:
   account-service:
     url: ${ACCOUNT_SERVICE_URL:http://host.docker.internal:8080}

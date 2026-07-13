@@ -1,5 +1,5 @@
 # Maven
-target/
+**/target/
 *.class
 *.jar
 *.war
@@ -26,3 +26,6 @@ logs/
 
 # Spring Boot
 HELP.md
+
+# Claude Code
+.claude/settings.local.json

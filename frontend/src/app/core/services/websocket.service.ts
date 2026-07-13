@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Client, IMessage } from '@stomp/stompjs';
 import { Subject } from 'rxjs';
 import { AuthService } from './auth.service';
-import { Notification, Account, Transaction } from '../models';
+import { Notification, BalanceUpdate, Transaction } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class WebSocketService {
@@ -10,7 +10,7 @@ export class WebSocketService {
   private client: Client | null = null;
 
   readonly notification$ = new Subject<Notification>();
-  readonly balance$ = new Subject<Account>();
+  readonly balance$ = new Subject<BalanceUpdate>();
   readonly transaction$ = new Subject<Transaction>();
 
   connect(): void {

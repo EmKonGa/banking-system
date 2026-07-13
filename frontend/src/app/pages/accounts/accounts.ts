@@ -49,11 +49,13 @@ export class AccountsPage implements OnInit {
   ngOnInit(): void {
     this.loadAccounts();
     this.wsSvc.balance$.subscribe(updated => {
-      this.accounts.update(list => list.map(a => a.id === updated.id ? updated : a));
-      if (this.selectedAccount()?.id === updated.id) {
-        this.selectedAccount.set(updated);
+      this.accounts.update(list => list.map(a =>
+        a.id === updated.accountId ? { ...a, balance: updated.balance } : a
+      ));
+      if (this.selectedAccount()?.id === updated.accountId) {
+        this.selectedAccount.update(a => a ? { ...a, balance: updated.balance } : a);
         this.loadingTx.set(true);
-        this.accountSvc.getAccountTransactions(updated.id).subscribe(txs => {
+        this.accountSvc.getAccountTransactions(updated.accountId).subscribe(txs => {
           this.transactions.set(txs);
           this.loadingTx.set(false);
         });
@@ -82,7 +84,10 @@ export class AccountsPage implements OnInit {
         this.showCreateDialog.set(false);
         this.creating.set(false);
       },
-      error: () => this.creating.set(false)
+      error: (err) => {
+        alert(err.error?.message ?? 'Failed to create account');
+        this.creating.set(false);
+      }
     });
   }
 

@@ -55,12 +55,14 @@ export class TransferPage implements OnInit {
 
     this.wsSvc.balance$.subscribe(updated => {
       this.accountOptions.update(opts =>
-        opts.map(o => o.value === updated.id
-          ? { ...o, label: `${updated.accountNumber} (${updated.type}) — $${updated.balance.toFixed(2)}` }
+        opts.map(o => o.value === updated.accountId
+          ? { ...o, label: `${updated.accountNumber} — $${updated.balance.toFixed(2)}` }
           : o)
       );
-      // Reload transactions when an incoming transfer is detected (receiver side)
-      this.loadTransactions();
+    });
+
+    this.wsSvc.transaction$.subscribe(tx => {
+      this.transactions.update(list => [tx, ...list]);
     });
   }
 
@@ -72,21 +74,30 @@ export class TransferPage implements OnInit {
     });
   }
 
+  private pendingIdempotencyKey: string | null = null;
+
   submit(): void {
     if (this.form.invalid) return;
     const { fromAccountId, toAccountNumber, amount, description } = this.form.getRawValue();
     this.submitting.set(true);
 
+    // Generate once per submit intent; reuse on retry so duplicates are deduplicated server-side.
+    if (!this.pendingIdempotencyKey) {
+      this.pendingIdempotencyKey = crypto.randomUUID();
+    }
+
     this.paymentSvc.transfer({
       fromAccountId: fromAccountId!,
       toAccountNumber: toAccountNumber!,
       amount: amount!,
-      description: description || undefined
+      description: description || undefined,
+      idempotencyKey: this.pendingIdempotencyKey
     }).subscribe({
       next: (tx) => {
         this.msg.add({ severity: 'success', summary: 'Transfer sent', detail: `$${amount} transferred successfully` });
         this.transactions.update(list => [tx, ...list]);
         this.form.patchValue({ amount: null, description: '' });
+        this.pendingIdempotencyKey = null;
         this.submitting.set(false);
       },
       error: err => {

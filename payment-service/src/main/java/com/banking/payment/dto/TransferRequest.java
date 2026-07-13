@@ -13,5 +13,6 @@ public record TransferRequest(
         @NotBlank String toAccountNumber,
         @NotNull @DecimalMin(value = "0.01", message = "Amount must be positive")
         @Digits(integer = 15, fraction = 4) BigDecimal amount,
-        String description
+        String description,
+        UUID idempotencyKey  // client-provided; if absent the server generates one (not retry-safe)
 ) {}

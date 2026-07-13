@@ -47,6 +47,8 @@ public class OutboxEvent {
     @Column(length = 1000)
     private String lastError;
 
+    private Instant nextRetryAt;
+
     public static OutboxEvent of(String topic, String aggregateId, String payload) {
         OutboxEvent event = new OutboxEvent();
         event.id = UUID.randomUUID();

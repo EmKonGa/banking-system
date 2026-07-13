@@ -24,7 +24,7 @@ export class RegisterPage {
   errorMsg = signal('');
 
   form = this.fb.group({
-    name: ['', Validators.required],
+    fullName: ['', Validators.required],
     email: ['', [Validators.required, Validators.email]],
     password: ['', [Validators.required, Validators.minLength(6)]]
   });

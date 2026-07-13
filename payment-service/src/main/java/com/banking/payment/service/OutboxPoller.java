@@ -4,13 +4,17 @@ import com.banking.payment.resilience.KafkaEventPublisher;
 import com.banking.events.PaymentEvent;
 import com.banking.payment.entity.OutboxEvent;
 import com.banking.payment.entity.OutboxStatus;
+import com.banking.payment.event.OutboxTriggerEvent;
 import com.banking.payment.repository.OutboxEventRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Instant;
 import java.util.List;
@@ -20,17 +24,26 @@ import java.util.List;
 @RequiredArgsConstructor
 public class OutboxPoller {
 
-    private static final int MAX_RETRIES = 5;
-
     private final OutboxEventRepository outboxRepository;
     private final KafkaEventPublisher kafkaEventPublisher;
     private final ObjectMapper objectMapper;
 
-    @Scheduled(fixedDelay = 15000)
+    @Value("${outbox.max-retries:5}")
+    private int maxRetries;
+
+    @Value("${outbox.base-backoff-seconds:15}")
+    private long baseBackoffSeconds;
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void onTransferCommitted(OutboxTriggerEvent event) {
+        pollAndPublish();
+    }
+
+    @Scheduled(fixedDelayString = "${outbox.poll-interval-ms:15000}")
     @Transactional
     public void pollAndPublish() {
-        List<OutboxEvent> pending = outboxRepository
-                .findTop10ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING);
+        List<OutboxEvent> pending = outboxRepository.findPendingWithLock();
 
         if (pending.isEmpty()) return;
 
@@ -49,11 +62,16 @@ public class OutboxPoller {
                 String err = e.getMessage() != null ? e.getMessage() : "unknown error";
                 event.setLastError(err.length() > 1000 ? err.substring(0, 1000) : err);
 
-                if (attempts >= MAX_RETRIES) {
+                if (attempts >= maxRetries) {
                     event.setStatus(OutboxStatus.FAILED);
-                    log.error("[OUTBOX] Event id={} PERMANENTLY FAILED after {} attempts", event.getId(), attempts);
+                    log.error("[OUTBOX] DEAD LETTER event id={} transaction={} after {} attempts — manual intervention required",
+                            event.getId(), event.getAggregateId(), attempts);
                 } else {
-                    log.warn("[OUTBOX] Event id={} failed (attempt {}), will retry", event.getId(), attempts);
+                    // 2^attempts * base: 30s → 60s → 120s → 240s
+                    long backoffSeconds = (long) Math.pow(2, attempts) * baseBackoffSeconds;
+                    event.setNextRetryAt(Instant.now().plusSeconds(backoffSeconds));
+                    log.warn("[OUTBOX] Event id={} failed (attempt {}/{}), next retry in {}s",
+                            event.getId(), attempts, maxRetries, backoffSeconds);
                 }
             }
             outboxRepository.save(event);

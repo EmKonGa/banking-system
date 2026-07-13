@@ -12,12 +12,14 @@ import com.banking.payment.entity.OutboxEvent;
 import com.banking.payment.entity.Transaction;
 import com.banking.payment.entity.TransactionStatus;
 import com.banking.payment.entity.TransactionType;
+import com.banking.payment.event.OutboxTriggerEvent;
 import com.banking.payment.repository.OutboxEventRepository;
 import com.banking.payment.repository.TransactionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -38,11 +40,14 @@ public class PaymentService {
     private final OutboxEventRepository outboxRepository;
     private final AccountServiceClient accountServiceClient;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public TransactionResponse transfer(TransferRequest request) {
         JwtPrincipal principal = currentPrincipal();
-        UUID idempotencyKey = UUID.randomUUID();
+        // Prefer client-provided key so retries hit the idempotency cache.
+        // Server-generated fallback is not retry-safe.
+        UUID idempotencyKey = request.idempotencyKey() != null ? request.idempotencyKey() : UUID.randomUUID();
 
         TransferExecutionResult result = accountServiceClient.executeTransfer(
                 new TransferExecutionRequest(
@@ -89,6 +94,9 @@ public class PaymentService {
         } catch (JsonProcessingException e) {
             throw new AppException("Failed to serialize payment event", HttpStatus.INTERNAL_SERVER_ERROR);
         }
+
+        // Fire after commit so the poller sees the committed outbox row immediately.
+        eventPublisher.publishEvent(new OutboxTriggerEvent());
 
         return TransactionResponse.from(tx);
     }

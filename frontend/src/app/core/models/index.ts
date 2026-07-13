@@ -4,7 +4,7 @@ export interface LoginRequest {
 }
 
 export interface RegisterRequest {
-  name: string;
+  fullName: string;
   email: string;
   password: string;
 }
@@ -49,6 +49,13 @@ export interface TransferRequest {
   toAccountNumber: string;
   amount: number;
   description?: string;
+  idempotencyKey?: string;
+}
+
+export interface BalanceUpdate {
+  accountId: string;
+  accountNumber: string;
+  balance: number;
 }
 
 export type NotificationType = 'PAYMENT_SENT' | 'PAYMENT_RECEIVED' | 'ACCOUNT_CREATED' | 'GENERAL';
