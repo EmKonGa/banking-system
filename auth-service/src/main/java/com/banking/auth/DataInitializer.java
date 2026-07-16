@@ -7,13 +7,20 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+/**
+ * Seeds demo users (including a known-password ADMIN) for local development only.
+ * Never runs under the {@code prod} profile so the known credentials cannot reach a
+ * real deployment. Prod must provision its own admin through a secure path.
+ */
 @Slf4j
 @Component
+@Profile("!prod")
 @RequiredArgsConstructor
 public class DataInitializer implements ApplicationRunner {
 

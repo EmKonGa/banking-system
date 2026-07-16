@@ -88,8 +88,10 @@ services:
       context: .
       dockerfile: auth-service/Dockerfile
     container_name: banking_auth
+    # Bound to localhost only: reachable for local debugging but not from the LAN.
+    # Public traffic must go through the gateway (8080); direct access would expose /internal.
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -116,8 +118,9 @@ services:
       context: .
       dockerfile: account-service/Dockerfile
     container_name: banking_account
+    # Bound to localhost only: /internal/accounts/execute-transfer must never be LAN-reachable.
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -146,8 +149,9 @@ services:
       context: .
       dockerfile: payment-service/Dockerfile
     container_name: banking_payment
+    # Bound to localhost only: /internal payment endpoints must never be LAN-reachable.
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -181,8 +185,9 @@ services:
       context: .
       dockerfile: notification-service/Dockerfile
     container_name: banking_notification
+    # Bound to localhost only; public traffic goes through the gateway (8080).
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
