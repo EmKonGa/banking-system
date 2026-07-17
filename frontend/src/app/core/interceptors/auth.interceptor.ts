@@ -4,7 +4,9 @@ import { BehaviorSubject, catchError, filter, switchMap, take, throwError } from
 import { AuthService } from '../services/auth.service';
 
 let isRefreshing = false;
-const refreshed$ = new BehaviorSubject<boolean>(false);
+// 'pending' while a refresh is in flight; waiters resume on 'ok', fail fast on 'fail'
+// so they never hang when the refresh itself fails (which logs the user out).
+const refreshState$ = new BehaviorSubject<'pending' | 'ok' | 'fail'>('pending');
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const authSvc = inject(AuthService);
@@ -25,27 +27,33 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
       if (!isRefreshing) {
         isRefreshing = true;
-        refreshed$.next(false);
+        refreshState$.next('pending');
 
         return authSvc.refresh().pipe(
           switchMap(() => {
             isRefreshing = false;
-            refreshed$.next(true);
+            refreshState$.next('ok');
             return next(withToken(localStorage.getItem('accessToken')!));
           }),
           catchError(refreshErr => {
             isRefreshing = false;
-            authSvc.logout();
+            refreshState$.next('fail');
+            authSvc.logout(); // clears tokens + redirects to /login
             return throwError(() => refreshErr);
           })
         );
       }
 
-      // Another request already triggered refresh — wait for it then retry
-      return refreshed$.pipe(
-        filter(done => done),
+      // Another request already triggered refresh — wait for its outcome, then
+      // retry on success or propagate the original 401 on failure.
+      return refreshState$.pipe(
+        filter(state => state !== 'pending'),
         take(1),
-        switchMap(() => next(withToken(localStorage.getItem('accessToken')!)))
+        switchMap(state =>
+          state === 'ok'
+            ? next(withToken(localStorage.getItem('accessToken')!))
+            : throwError(() => err)
+        )
       );
     })
   );

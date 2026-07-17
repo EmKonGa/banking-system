@@ -70,16 +70,20 @@ Spring Boot 3.3 / Java 21 microservices. All external traffic enters through the
 
 ## Auth Flow
 
-Stateless JWT-based auth with two-token strategy:
+Stateless JWT-based auth with two-token strategy and banking-grade session controls:
 
-- **Access token** (15 min): signed HS256 JWT; carries `jti` (UUID) for blacklisting and `sub` (email).
-- **Refresh token** (7 days): opaque UUID stored in Redis under `refresh:<token>` → `userId`.
+- **Access token** (5 min, `JWT_ACCESS_EXPIRATION_MS`): signed HS256 JWT; carries `jti` (UUID) for blacklisting and `sub` (email).
+- **Refresh token** (15 min, `JWT_REFRESH_EXPIRATION_MS`): opaque UUID stored in Redis under `refresh:<token>` → `<userId>|<sessionStartMillis>`. Because rotation re-issues on every refresh, this TTL acts as an **idle timeout**.
 
 JWT validation happens **at the gateway** (`JwtAuthGatewayFilter`). The gateway checks the Redis blacklist on every request and forwards the JWT to downstream services. Individual services also validate JWTs for their own security config.
 
 **Logout** blacklists the access token's `jti` in Redis (`blacklist:<jti>`) for its remaining TTL, and deletes the refresh token key.
 
-**Refresh rotation**: old refresh token is deleted and a new one issued atomically in `RefreshTokenService.rotate()`.
+**Refresh rotation**: old refresh token is deleted and a new one issued atomically in `RefreshTokenService.rotate()`, carrying the original `sessionStart` forward.
+
+**Absolute session cap** (`JWT_MAX_SESSION_MS`, default 8h; `0` disables): `AuthService.refresh` rejects a refresh once the session is older than the cap, even for a continuously active user — rotation can't reset it because `sessionStart` is preserved.
+
+**Activity-aware refresh (frontend)**: `AuthService` (Angular) refreshes on a timer only while the user is active; after the idle window it shows a countdown "stay logged in?" modal (`SessionTimeoutDialog`) before logging out. Keep the frontend `IDLE_TIMEOUT_MS` in step with `JWT_REFRESH_EXPIRATION_MS`.
 
 ## Key Design Decisions
 

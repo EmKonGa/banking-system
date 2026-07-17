@@ -2,6 +2,7 @@ package com.banking.auth.service;
 
 import com.banking.auth.dto.*;
 import com.banking.common.exception.AppException;
+import com.banking.common.security.AppProperties;
 import com.banking.common.security.JwtService;
 import com.banking.common.security.TokenBlacklistService;
 import com.banking.user.entity.Role;
@@ -29,6 +30,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final AppProperties props;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -53,13 +55,23 @@ public class AuthService {
     }
 
     public AuthResponse refresh(RefreshTokenRequest request) {
-        String userId = refreshTokenService.getUserId(request.refreshToken())
+        RefreshTokenService.Session session = refreshTokenService.getSession(request.refreshToken())
                 .orElseThrow(() -> new AppException("Invalid or expired refresh token", HttpStatus.UNAUTHORIZED));
 
-        User user = userRepository.findById(UUID.fromString(userId))
+        // Absolute session cap: once a session is older than maxSessionMs, force a
+        // full re-login even if the user has been continuously active. Rotation
+        // preserves sessionStart, so this can't be reset by refreshing.
+        // A cap of 0 (or negative) disables the check — an unbounded session.
+        long cap = props.getMaxSessionMs();
+        if (cap > 0 && System.currentTimeMillis() - session.sessionStart() > cap) {
+            refreshTokenService.delete(request.refreshToken());
+            throw new AppException("Session expired. Please log in again.", HttpStatus.UNAUTHORIZED);
+        }
+
+        User user = userRepository.findById(UUID.fromString(session.userId()))
                 .orElseThrow(() -> new AppException("User not found", HttpStatus.NOT_FOUND));
 
-        String newRefreshToken = refreshTokenService.rotate(request.refreshToken(), userId);
+        String newRefreshToken = refreshTokenService.rotate(request.refreshToken(), session);
         String newAccessToken = jwtService.generateAccessToken(user, user.getId().toString());
         return new AuthResponse(newAccessToken, newRefreshToken);
     }

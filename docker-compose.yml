@@ -100,6 +100,9 @@ services:
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      JWT_ACCESS_EXPIRATION_MS: ${JWT_ACCESS_EXPIRATION_MS:-300000}
+      JWT_REFRESH_EXPIRATION_MS: ${JWT_REFRESH_EXPIRATION_MS:-900000}
+      JWT_MAX_SESSION_MS: ${JWT_MAX_SESSION_MS:-28800000}
       OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]

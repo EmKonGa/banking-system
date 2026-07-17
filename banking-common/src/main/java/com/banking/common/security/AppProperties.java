@@ -11,4 +11,5 @@ public class AppProperties {
     private String secret;
     private long accessExpirationMs;
     private long refreshExpirationMs;
+    private long maxSessionMs;
 }
