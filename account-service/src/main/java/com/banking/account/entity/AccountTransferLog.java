@@ -3,11 +3,19 @@ package com.banking.account.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.springframework.data.domain.Persistable;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Insert-only idempotency record. Implements {@link Persistable} with {@code isNew() == true}
+ * so {@code save()} always issues an INSERT (via {@code persist}) rather than a {@code merge}
+ * upsert. This is what makes a duplicate idempotency key raise a constraint violation
+ * (→ DataIntegrityViolationException) instead of silently updating the existing row — the
+ * behaviour the transfer idempotency handling relies on, especially under concurrency.
+ */
 @Entity
 @Table(name = "account_transfer_log")
 @Getter
@@ -15,7 +23,7 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class AccountTransferLog {
+public class AccountTransferLog implements Persistable<UUID> {
 
     @Id
     private UUID idempotencyKey;
@@ -46,4 +54,16 @@ public class AccountTransferLog {
 
     @CreationTimestamp
     private Instant createdAt;
+
+    @Override
+    public UUID getId() {
+        return idempotencyKey;
+    }
+
+    /** Always an INSERT — a duplicate key must fail loudly, never upsert. */
+    @Override
+    @Transient
+    public boolean isNew() {
+        return true;
+    }
 }

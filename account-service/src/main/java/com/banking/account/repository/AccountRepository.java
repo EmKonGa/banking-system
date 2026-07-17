@@ -2,7 +2,9 @@ package com.banking.account.repository;
 
 import com.banking.account.entity.Account;
 import com.banking.account.entity.AccountStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,6 +19,13 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     List<Account> findByUserIdAndStatusNot(UUID userId, AccountStatus status);
     boolean existsByAccountNumber(String accountNumber);
     Optional<Account> findByAccountNumber(String accountNumber);
+
+    // Locks a single account row (SELECT ... FOR UPDATE) without mutating it. The transfer
+    // flow calls this on both accounts in a deterministic id-ascending order so two opposing
+    // concurrent transfers on the same pair acquire locks in the same order and cannot deadlock.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM Account a WHERE a.id = :id")
+    Optional<Account> findByIdForUpdate(@Param("id") UUID id);
 
     // Returns 1 if the debit succeeded, 0 if balance was insufficient or account inactive.
     // The WHERE clause makes the balance check and deduction a single atomic DB operation.

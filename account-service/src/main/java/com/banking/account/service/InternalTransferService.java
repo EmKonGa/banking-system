@@ -13,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 @Service
 @RequiredArgsConstructor
 public class InternalTransferService {
@@ -42,14 +44,28 @@ public class InternalTransferService {
             throw new AppException("Destination account is not active", HttpStatus.BAD_REQUEST);
         }
 
-        // Atomic debit: WHERE balance >= :amount makes the balance check and deduction one DB
+        // Acquire both row locks up front in a deterministic global order (ascending id),
+        // independent of transfer direction, so two opposing concurrent transfers on the same
+        // pair (A→B and B→A) can't deadlock. Lock-acquisition order is decoupled from write
+        // order: locks go id-ascending here, but the balance mutations below still run debit-first.
+        UUID firstLockId = from.getId().compareTo(to.getId()) < 0 ? from.getId() : to.getId();
+        UUID secondLockId = firstLockId.equals(from.getId()) ? to.getId() : from.getId();
+        accountRepository.findByIdForUpdate(firstLockId)
+                .orElseThrow(() -> new AppException("Account not found", HttpStatus.NOT_FOUND));
+        accountRepository.findByIdForUpdate(secondLockId)
+                .orElseThrow(() -> new AppException("Account not found", HttpStatus.NOT_FOUND));
+
+        // Atomic debit first: WHERE balance >= :amount makes the balance check and deduction one DB
         // operation — concurrent transfers cannot both pass on the same account.
         int debited = accountRepository.deductBalance(from.getId(), request.amount());
         if (debited == 0) {
             throw new AppException("Insufficient balance", HttpStatus.UNPROCESSABLE_ENTITY);
         }
 
-        accountRepository.addBalance(to.getId(), request.amount());
+        int credited = accountRepository.addBalance(to.getId(), request.amount());
+        if (credited == 0) {
+            throw new AppException("Destination account is not active", HttpStatus.BAD_REQUEST);
+        }
 
         // Reload to get committed balances after the bulk updates.
         from = accountRepository.findById(from.getId()).orElseThrow();
