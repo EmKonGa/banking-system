@@ -18,11 +18,9 @@ A Spring Boot 3.3 / Java 21 microservices banking platform — account managemen
 
 | Layer | Technology |
 |---|---|
-| Layer | Technology |
-|---|---|
 | Runtime | Java 21 |
 | Framework | Spring Boot 3.3 |
-| Frontend | Angular 18 |
+| Frontend | Angular 21 |
 | Gateway | Spring Cloud Gateway |
 | Security | Spring Security + JWT (HS256) |
 | Service Communication | OpenFeign (sync), Apache Kafka (async) |
@@ -185,7 +183,7 @@ banking-system/
 ├── notification-service/  # Kafka consumer, WebSocket push
 ├── banking-common/        # AppException, GlobalExceptionHandler
 ├── banking-events/        # Shared Kafka event DTOs
-├── frontend/              # Angular 18 SPA
+├── frontend/              # Angular 21 SPA
 ├── observability/         # Prometheus, Tempo, Grafana config
 └── docker-compose.yml
 ```
@@ -193,5 +191,5 @@ banking-system/
 ## Running Tests
 
 ```bash
-./mvnw test
+mvn test
 ```

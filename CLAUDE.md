@@ -92,7 +92,7 @@ JWT validation happens **at the gateway** (`JwtAuthGatewayFilter`). The gateway 
 - **Resilience4j** circuit breakers and retries on Redis, Kafka, and inter-service Feign calls in every service.
 - **`User` implements `UserDetails`** directly — no separate adapter wrapper.
 - **`GlobalExceptionHandler`** centralizes error responses: `AppException` → typed HTTP status, `BadCredentialsException` → 401, `MethodArgumentNotValidException` → field-keyed map.
-- `spring.jpa.hibernate.ddl-auto=update` — schema managed by Hibernate auto-DDL in development.
+- **Flyway migrations** — schema is managed by Flyway per service (`db/migration`); `spring.jpa.hibernate.ddl-auto=validate` so Hibernate only checks the schema against the entities, it does not mutate it.
 - Kafka runs in KRaft mode (no Zookeeper). External port `9094`; internal broker port `9092`.
 
 ## Infrastructure Ports
