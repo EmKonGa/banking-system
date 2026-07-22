@@ -19,6 +19,10 @@ spring:
     default-schema: banking_payment
 
   jpa:
+    # Hold the JDBC connection only for the service call, not until the response is written.
+    # With OSIV on, a request that calls account-service over Feign pins one of the 10 pool
+    # slots across that network hop.
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false

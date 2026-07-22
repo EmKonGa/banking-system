@@ -1,5 +1,6 @@
 package com.banking.account.service;
 
+import com.banking.account.event.AccountsChangedEvent;
 import com.banking.account.entity.Account;
 import com.banking.account.entity.AccountStatus;
 import com.banking.account.entity.AccountTransferLog;
@@ -9,6 +10,7 @@ import com.banking.common.exception.AppException;
 import com.banking.events.TransferExecutionRequest;
 import com.banking.events.TransferExecutionResult;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,7 @@ public class InternalTransferService {
 
     private final AccountRepository accountRepository;
     private final AccountTransferLogRepository transferLogRepository;
+    private final ApplicationEventPublisher events;
 
     @Transactional
     public TransferExecutionResult execute(TransferExecutionRequest request) {
@@ -85,6 +88,12 @@ public class InternalTransferService {
                 .fromBalance(from.getBalance())
                 .toBalance(to.getBalance())
                 .build());
+
+        // Both sides moved, and they usually belong to different users — invalidating only the
+        // sender would leave the recipient reading a pre-transfer balance. Delivery is deferred to
+        // after this transaction commits, so no concurrent read can re-cache the old balance.
+        events.publishEvent(AccountsChangedEvent.ofTransfer(
+                from.getId(), from.getUserId(), to.getId(), to.getUserId()));
 
         return new TransferExecutionResult(
                 from.getAccountNumber(), to.getAccountNumber(),

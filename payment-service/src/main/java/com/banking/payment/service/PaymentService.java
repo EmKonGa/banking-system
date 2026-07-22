@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -103,11 +104,13 @@ public class PaymentService {
         return TransactionResponse.from(tx);
     }
 
-    public Page<TransactionResponse> myTransactions(Pageable pageable) {
+    @Transactional(readOnly = true)
+    public Slice<TransactionResponse> myTransactions(Pageable pageable) {
         return transactionRepository.findByUserId(currentPrincipal().id(), pageable)
                 .map(TransactionResponse::from);
     }
 
+    @Transactional(readOnly = true)
     public Page<TransactionResponse> transactionsByAccount(UUID accountId, Pageable pageable) {
         return transactionRepository.findByAccountId(accountId, pageable)
                 .map(TransactionResponse::from);

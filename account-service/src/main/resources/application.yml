@@ -19,6 +19,9 @@ spring:
     default-schema: banking_account
 
   jpa:
+    # Hold the JDBC connection only for the service call, not until the response is written.
+    # Without this a cache hit still occupies a pool slot for the whole request.
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
@@ -39,6 +42,12 @@ spring:
           max-idle: 8
           min-idle: 2
           max-wait: 1s
+
+banking:
+  cache:
+    # Backstop only — correctness comes from eviction on every mutation. This bounds how long a
+    # dropped eviction (e.g. Redis blip) could keep serving a stale balance.
+    account-ttl: ${ACCOUNT_CACHE_TTL:60s}
 
 server:
   port: 8082
@@ -90,6 +99,11 @@ resilience4j:
         wait-duration-in-open-state: 30s
         record-exceptions:
           - org.springframework.data.redis.RedisConnectionFailureException
+          # Spring Data translates Lettuce's RedisCommandTimeoutException into this, so without it
+          # the most common Redis failure — a command timing out while the server is reachable but
+          # unresponsive — was counted as a SUCCESS and the breaker never opened. Note that
+          # record-exceptions is a whitelist: anything unlisted is treated as a successful call.
+          - org.springframework.dao.QueryTimeoutException
           - io.lettuce.core.RedisException
           - java.util.concurrent.TimeoutException
           - java.io.IOException
@@ -114,6 +128,9 @@ resilience4j:
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2.0
         exponential-max-wait-duration: 3s
+        # QueryTimeoutException is deliberately absent here even though it is recorded by the
+        # circuit breaker: the command already waited out the full timeout, so retrying it twice
+        # more turns a 2s failure into 6s. Let the breaker open instead.
         retry-exceptions:
           - org.springframework.data.redis.RedisConnectionFailureException
           - io.lettuce.core.RedisException

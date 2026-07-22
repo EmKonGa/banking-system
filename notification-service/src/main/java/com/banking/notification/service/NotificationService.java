@@ -14,8 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 
 import java.util.UUID;
 
@@ -45,7 +45,8 @@ public class NotificationService {
         }
     }
 
-    public Page<NotificationResponse> myNotifications(Pageable pageable) {
+    @Transactional(readOnly = true)
+    public Slice<NotificationResponse> myNotifications(Pageable pageable) {
         return notificationRepository.findByUserIdOrderByCreatedAtDesc(currentUserId(), pageable)
                 .map(NotificationResponse::from);
     }

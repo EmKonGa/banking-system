@@ -5,8 +5,8 @@ import com.banking.payment.dto.TransferRequest;
 import com.banking.payment.service.PaymentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +25,7 @@ public class PaymentController {
     }
 
     @GetMapping("/transactions")
-    public ResponseEntity<Page<TransactionResponse>> myTransactions(
+    public ResponseEntity<Slice<TransactionResponse>> myTransactions(
             @PageableDefault(size = 20) Pageable pageable) {
         return ResponseEntity.ok(paymentService.myTransactions(pageable));
     }

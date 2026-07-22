@@ -19,6 +19,8 @@ spring:
     default-schema: banking_auth
 
   jpa:
+    # Hold the JDBC connection only for the service call, not until the response is written.
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
