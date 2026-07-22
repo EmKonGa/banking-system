@@ -101,6 +101,11 @@ resilience4j:
         wait-duration-in-open-state: 30s
         record-exceptions:
           - org.springframework.data.redis.RedisConnectionFailureException
+          # record-exceptions is a whitelist — anything unlisted counts as a SUCCESS. Spring Data
+          # translates Lettuce's RedisCommandTimeoutException into QueryTimeoutException, so
+          # without this entry the most common Redis failure (server reachable but unresponsive)
+          # never opened the breaker.
+          - org.springframework.dao.QueryTimeoutException
           - io.lettuce.core.RedisException
           - java.util.concurrent.TimeoutException
           - java.io.IOException
@@ -122,6 +127,9 @@ resilience4j:
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2.0
         exponential-max-wait-duration: 3s
+        # QueryTimeoutException is deliberately absent here even though the breaker records it:
+        # the command already waited out the full timeout, so retrying turns 2s into 6s. Let the
+        # breaker open instead.
         retry-exceptions:
           - org.springframework.data.redis.RedisConnectionFailureException
           - io.lettuce.core.RedisException
