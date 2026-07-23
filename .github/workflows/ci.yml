@@ -28,6 +28,13 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      # mvnw is committed with mode 100644, not 100755. It was authored on Windows, where
+      # core.fileMode is false and Git cannot see exec bits — and a path-scoped `git commit`
+      # re-reads the working tree, so `git update-index --chmod=+x` does not survive. Rather than
+      # depend on the mode being right, set it here.
+      - name: Make the Maven wrapper executable
+        run: chmod +x mvnw
+
       # Testcontainers needs a Docker daemon; ubuntu-latest ships one, so no service container
       # is required. TransferConcurrencyStressTest runs against a real Postgres through it.
       - name: Verify
