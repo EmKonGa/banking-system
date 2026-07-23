@@ -1,0 +1,10 @@
+# Normalize line endings so a Windows checkout can't produce blobs that break Linux CI.
+* text=auto
+
+# mvnw is executed by /bin/sh on the runner; CRLF here fails with `bad interpreter: /bin/sh^M`.
+mvnw    text eol=lf
+*.sh    text eol=lf
+
+# Windows-only scripts keep CRLF.
+mvnw.cmd text eol=crlf
+*.bat    text eol=crlf

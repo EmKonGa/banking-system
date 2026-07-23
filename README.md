@@ -1,5 +1,7 @@
 # Banking System
 
+[![CI](https://github.com/EmKonGa/banking-system/actions/workflows/ci.yml/badge.svg)](https://github.com/EmKonGa/banking-system/actions/workflows/ci.yml)
+
 A Spring Boot 3.3 / Java 21 microservices banking platform — account management, fund transfers, real-time notifications, and full observability.
 
 ## Features

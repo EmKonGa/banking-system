@@ -19,8 +19,12 @@ mvn spring-boot:run -pl <service>
 
 **Run all tests:**
 ```bash
-./mvnw test
+./mvnw test          # or `verify`, which is what CI runs
 ```
+
+> The Maven wrapper pins **3.9.9** (`.mvn/wrapper/maven-wrapper.properties`, script-only — there is
+> no wrapper jar, because `.gitignore` excludes `*.jar`). Use `./mvnw` rather than a system `mvn` so
+> local builds match CI. Some tests use **Testcontainers** and need a running Docker daemon.
 
 **Run a single test class:**
 ```bash
