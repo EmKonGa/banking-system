@@ -72,6 +72,32 @@ logging:
   level:
     org.springframework.cloud.gateway: INFO
 
+# Mirrors the `redis` breaker in the four downstream services, with two deliberate differences:
+# there is no `retry` instance (the gateway's only Redis call is a read on the hot path — retrying
+# it multiplies the outage latency it is meant to hide), and AppException is absent from
+# ignore-exceptions because api-gateway does not depend on banking-common.
+resilience4j:
+  circuitbreaker:
+    instances:
+      redis:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        slow-call-duration-threshold: 2s
+        slow-call-rate-threshold: 80
+        record-exceptions:
+          # A whitelist — anything unlisted counts as a SUCCESS. QueryTimeoutException is what
+          # Spring Data translates a Lettuce command timeout into, i.e. the most common failure:
+          # Redis reachable but unresponsive.
+          - org.springframework.data.redis.RedisConnectionFailureException
+          - org.springframework.dao.QueryTimeoutException
+          - io.lettuce.core.RedisException
+          - java.util.concurrent.TimeoutException
+          - java.io.IOException
+
 management:
   endpoints:
     web:
