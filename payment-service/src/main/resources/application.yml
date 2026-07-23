@@ -75,6 +75,16 @@ outbox:
   max-retries: ${OUTBOX_MAX_RETRIES:5}
   base-backoff-seconds: ${OUTBOX_BASE_BACKOFF_SECONDS:15}
 
+transfer:
+  recovery:
+    poll-interval-ms: ${TRANSFER_RECOVERY_POLL_INTERVAL_MS:30000}
+    grace-period-seconds: ${TRANSFER_RECOVERY_GRACE_PERIOD_SECONDS:60}
+    write-off-seconds: ${TRANSFER_RECOVERY_WRITE_OFF_SECONDS:900}
+
+kafka:
+  publish:
+    ack-timeout-ms: ${KAFKA_PUBLISH_ACK_TIMEOUT_MS:35000}
+
 services:
   account-service:
     url: ${ACCOUNT_SERVICE_URL:http://host.docker.internal:8080}
@@ -129,6 +139,7 @@ resilience4j:
         wait-duration-in-open-state: 60s
         slow-call-duration-threshold: 5s
         record-exceptions:
+          - org.apache.kafka.common.KafkaException
           - org.apache.kafka.common.errors.TimeoutException
           - org.apache.kafka.common.errors.RetriableException
           - org.springframework.kafka.KafkaException
@@ -162,16 +173,6 @@ resilience4j:
           - java.util.concurrent.TimeoutException
         ignore-exceptions:
           - com.banking.common.exception.AppException
-      kafka-producer:
-        max-attempts: 3
-        wait-duration: 500ms
-        enable-exponential-backoff: true
-        exponential-backoff-multiplier: 2.0
-        exponential-max-wait-duration: 10s
-        retry-exceptions:
-          - org.apache.kafka.common.errors.TimeoutException
-          - org.apache.kafka.common.errors.RetriableException
-          - org.springframework.kafka.KafkaException
       account-service:
         max-attempts: 3
         wait-duration: 500ms

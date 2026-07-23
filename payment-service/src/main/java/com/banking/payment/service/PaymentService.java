@@ -2,24 +2,17 @@ package com.banking.payment.service;
 
 import com.banking.common.exception.AppException;
 import com.banking.common.security.JwtPrincipal;
-import com.banking.events.PaymentEvent;
 import com.banking.events.TransferExecutionRequest;
 import com.banking.events.TransferExecutionResult;
 import com.banking.payment.client.AccountServiceClient;
 import com.banking.payment.dto.TransactionResponse;
 import com.banking.payment.dto.TransferRequest;
-import com.banking.payment.entity.OutboxEvent;
 import com.banking.payment.entity.Transaction;
-import com.banking.payment.entity.TransactionStatus;
-import com.banking.payment.entity.TransactionType;
-import com.banking.payment.event.OutboxTriggerEvent;
-import com.banking.payment.repository.OutboxEventRepository;
 import com.banking.payment.repository.TransactionRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -29,7 +22,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 
-import java.time.Instant;
 import java.util.UUID;
 
 @Slf4j
@@ -37,71 +29,112 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PaymentService {
 
-    private static final String PAYMENT_TOPIC = "payment.events";
-
     private final TransactionRepository transactionRepository;
-    private final OutboxEventRepository outboxRepository;
     private final AccountServiceClient accountServiceClient;
-    private final ObjectMapper objectMapper;
-    private final ApplicationEventPublisher eventPublisher;
+    private final TransferLedger ledger;
 
-    @Transactional
+    /**
+     * Deliberately <strong>not</strong> {@code @Transactional} — the money commits in
+     * account-service's database and the ledger row commits here, so one annotation cannot span
+     * both. Wrapping this method only created the illusion that it did.
+     *
+     * <p>Intent first, then the money, then settlement. A failure in between leaves the intent
+     * PENDING for {@link TransferRecoveryPoller}, which is the point: the window is never silent.
+     */
     public TransactionResponse transfer(TransferRequest request) {
         JwtPrincipal principal = currentPrincipal();
-        // Prefer client-provided key so retries hit the idempotency cache.
-        // Server-generated fallback is not retry-safe.
-        UUID idempotencyKey = request.idempotencyKey() != null ? request.idempotencyKey() : UUID.randomUUID();
-
-        TransferExecutionResult result = accountServiceClient.executeTransfer(
-                new TransferExecutionRequest(
-                        request.fromAccountId(),
-                        request.toAccountNumber(),
-                        request.amount(),
-                        idempotencyKey,
-                        principal.id()
-                )
-        );
-
-        Transaction tx = Transaction.builder()
-                .fromAccountId(request.fromAccountId())
-                .toAccountId(result.toAccountId())
-                .fromAccountNumber(result.fromAccountNumber())
-                .toAccountNumber(result.toAccountNumber())
-                .fromUserId(result.fromUserId())
-                .toUserId(result.toUserId())
-                .amount(request.amount())
-                .type(TransactionType.TRANSFER)
-                .status(TransactionStatus.COMPLETED)
-                .description(request.description())
-                .build();
-        transactionRepository.save(tx);
-
-        PaymentEvent paymentEvent = new PaymentEvent(
-                tx.getId(),
-                request.fromAccountId(),
-                result.toAccountId(),
-                result.fromAccountNumber(),
-                result.toAccountNumber(),
-                result.fromUserId(),
-                result.toUserId(),
-                request.amount(),
-                result.fromBalance(),
-                result.toBalance(),
-                TransactionType.TRANSFER.name(),
-                Instant.now()
-        );
-
-        try {
-            String payload = objectMapper.writeValueAsString(paymentEvent);
-            outboxRepository.save(OutboxEvent.of(PAYMENT_TOPIC, tx.getId().toString(), payload));
-        } catch (JsonProcessingException e) {
-            throw new AppException("Failed to serialize payment event", HttpStatus.INTERNAL_SERVER_ERROR);
+        UUID idempotencyKey = request.idempotencyKey();
+        if (idempotencyKey == null) {
+            throw new AppException("idempotencyKey is required", HttpStatus.BAD_REQUEST);
         }
 
-        // Fire after commit so the poller sees the committed outbox row immediately.
-        eventPublisher.publishEvent(new OutboxTriggerEvent());
+        Transaction intent;
+        try {
+            intent = ledger.openIntent(request, principal.id());
+        } catch (DataIntegrityViolationException e) {
+            // Key already used. account-service dedupes the money; this stops a second ledger row.
+            return replayOf(idempotencyKey);
+        }
 
-        return TransactionResponse.from(tx);
+        TransferExecutionResult result;
+        try {
+            result = accountServiceClient.executeTransfer(new TransferExecutionRequest(
+                    request.fromAccountId(),
+                    request.toAccountNumber(),
+                    request.amount(),
+                    idempotencyKey,
+                    principal.id()));
+        } catch (FeignException e) {
+            if (isDefiniteRejection(e)) {
+                AppException rejection = toAppException(e);
+                ledger.settleFailed(intent.getId(), rejection.getMessage());
+                throw rejection;
+            }
+            throw indeterminate(intent, e);
+        } catch (Exception e) {
+            // Timeout, connection failure, open breaker — outcome unknown, same as a 5xx.
+            throw indeterminate(intent, e);
+        }
+
+        return TransactionResponse.from(ledger.settleCompleted(intent.getId(), result));
+    }
+
+    /**
+     * A 4xx means account-service evaluated the request and refused it — insufficient funds, a
+     * frozen account, an unknown destination. No money moved, and retrying the same request will
+     * not change that. Anything else is an infrastructure failure whose outcome is unknown.
+     */
+    private boolean isDefiniteRejection(FeignException e) {
+        return e.status() >= 400 && e.status() < 500;
+    }
+
+    /**
+     * Surfaces account-service's own status and message. Without this the caller sees a bare
+     * FeignException, which no handler maps — so "insufficient balance" reached the user as a 500.
+     */
+    private AppException toAppException(FeignException e) {
+        HttpStatus status = HttpStatus.resolve(e.status());
+        String message = e.responseBody()
+                .map(PaymentService::readUtf8)
+                .map(PaymentService::extractMessage)
+                .orElse("Transfer rejected");
+        return new AppException(message, status != null ? status : HttpStatus.BAD_REQUEST);
+    }
+
+    /** Reads without assuming the buffer has an accessible backing array. */
+    private static String readUtf8(java.nio.ByteBuffer body) {
+        java.nio.ByteBuffer copy = body.duplicate();
+        byte[] bytes = new byte[copy.remaining()];
+        copy.get(bytes);
+        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** Pulls "message" out of the shared ErrorResponse shape without a full parse. */
+    private static String extractMessage(String body) {
+        int at = body.indexOf("\"message\"");
+        if (at < 0) return "Transfer rejected";
+        int open = body.indexOf('"', body.indexOf(':', at) + 1);
+        int close = body.indexOf('"', open + 1);
+        return open > 0 && close > open ? body.substring(open + 1, close) : "Transfer rejected";
+    }
+
+    /**
+     * Leaves the intent PENDING on purpose. Settling it FAILED here would be a guess, and the wrong
+     * guess writes off a transfer whose money actually moved.
+     */
+    private AppException indeterminate(Transaction intent, Exception cause) {
+        log.error("[SAGA] intent {} left PENDING — outcome unknown: {}", intent.getId(), cause.toString());
+        return new AppException(
+                "Transfer is being processed. Check your transaction history before retrying.",
+                HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    private TransactionResponse replayOf(UUID idempotencyKey) {
+        Transaction existing = ledger.findByIdempotencyKey(idempotencyKey)
+                .orElseThrow(() -> new AppException("Transfer conflict", HttpStatus.CONFLICT));
+        log.info("[SAGA] duplicate submit for key {} → returning existing {} transfer",
+                idempotencyKey, existing.getStatus());
+        return TransactionResponse.from(existing);
     }
 
     @Transactional(readOnly = true)

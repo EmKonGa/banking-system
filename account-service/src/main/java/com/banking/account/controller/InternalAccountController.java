@@ -11,6 +11,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/internal/accounts")
 @RequiredArgsConstructor
@@ -18,6 +20,13 @@ public class InternalAccountController {
 
     private final InternalTransferService transferService;
     private final AccountTransferLogRepository transferLogRepository;
+
+    @GetMapping("/transfers/{idempotencyKey}")
+    public TransferExecutionResult findTransfer(@PathVariable UUID idempotencyKey) {
+        return transferLogRepository.findById(idempotencyKey)
+                .map(this::toResult)
+                .orElseThrow(() -> new AppException("No transfer for that key", HttpStatus.NOT_FOUND));
+    }
 
     @PostMapping("/execute-transfer")
     public TransferExecutionResult executeTransfer(@RequestBody TransferExecutionRequest request) {

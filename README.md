@@ -143,7 +143,14 @@ All endpoints are accessed through the gateway at `http://localhost:8080`. Endpo
 | POST | `/api/payments/transfer` | JWT | Transfer between accounts |
 | GET | `/api/payments/transactions` | JWT | Paginated transactions for current user |
 
-> Paginated endpoints return a Spring `Page<T>` envelope (`content`, `totalElements`, `totalPages`, etc.). Default page size: 20, max: 100. Add `?page=0&size=20` to control paging.
+> `POST /api/payments/transfer` **requires** an `idempotencyKey` (UUID) in the body. Generate one per
+> transfer attempt and reuse the *same* key if you retry — that is what makes a retry after a timeout
+> safe rather than a second payment. Requests without it are rejected with 400.
+
+> Paginated endpoints return a Spring `Slice<T>` envelope — `content` plus `last`/`first`, and **no
+> totals**. A `Page` would issue a second `COUNT` over the same predicate on every fetch just to
+> produce a page count nothing uses; a `Slice` fetches one extra row to answer "is there more".
+> Default page size: 20, max: 100. Add `?page=0&size=20` to control paging.
 
 ### Notifications
 

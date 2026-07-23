@@ -21,10 +21,19 @@ public class Transaction {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /**
+     * The client's key for this transfer attempt, and the deduplication point for the whole flow:
+     * account-service dedupes the money on it, and the unique constraint here stops a retried
+     * submit from writing a second ledger row for money that only moved once.
+     */
+    @Column(nullable = false, unique = true, updatable = false)
+    private UUID idempotencyKey;
+
     @Column
     private UUID fromAccountId;
 
-    @Column(nullable = false)
+    /** Null while PENDING — only account-service can resolve the account number to an id. */
+    @Column
     private UUID toAccountId;
 
     @Column
