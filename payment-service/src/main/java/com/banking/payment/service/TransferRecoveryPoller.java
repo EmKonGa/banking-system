@@ -17,8 +17,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Settles transfer intents whose outcome payment-service never learned, by asking account-service
- * what the idempotency key did.
+ * Settles intents whose outcome payment-service never learned, by asking account-service what the
+ * idempotency key did.
+ *
+ * <p>It covers deposits as well as transfers, without knowing the difference: both write to one
+ * movement log in account-service, keyed the same way, so one lookup answers for either.
  *
  * <p>It resolves rather than replays. Re-POSTing {@code execute-transfer} would be safe from a
  * duplication standpoint — that endpoint is idempotent — but it would <em>execute</em> a transfer
@@ -77,8 +80,8 @@ public class TransferRecoveryPoller {
         }
 
         ledger.settleCompleted(intent.getId(), result);
-        log.warn("[SAGA-RECOVERY] intent {} (key {}) had moved money with no ledger row — completed",
-                intent.getId(), intent.getIdempotencyKey());
+        log.warn("[SAGA-RECOVERY] {} intent {} (key {}) had moved money with no settled ledger row — completed",
+                intent.getType(), intent.getId(), intent.getIdempotencyKey());
     }
 
     private void writeOffIfOldEnough(Transaction intent) {
@@ -90,7 +93,7 @@ public class TransferRecoveryPoller {
                     intent.getId());
             return;
         }
-        ledger.settleFailed(intent.getId(), "no matching transfer in account-service after "
+        ledger.settleFailed(intent.getId(), "no matching movement in account-service after "
                 + Duration.ofSeconds(writeOffSeconds).toMinutes() + "m");
     }
 }

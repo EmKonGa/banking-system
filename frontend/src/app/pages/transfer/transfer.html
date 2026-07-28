@@ -79,7 +79,8 @@
           <ng-template #body let-tx>
             <tr>
               <td>{{ tx.createdAt | date:'short' }}</td>
-              <td>{{ tx.fromAccountNumber }} → {{ tx.toAccountNumber }}</td>
+              <!-- A deposit has no source account; the money came from outside the system. -->
+              <td>{{ tx.fromAccountNumber ?? 'Deposit' }} → {{ tx.toAccountNumber }}</td>
               <td>{{ tx.amount | currency }}</td>
               <td><p-tag [value]="tx.status" [severity]="txSeverity(tx.status)" /></td>
             </tr>

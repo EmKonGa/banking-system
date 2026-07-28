@@ -62,6 +62,17 @@ class PaymentEventConsumerTest {
                 "TRANSFER", Instant.now());
     }
 
+    /** Money entering the system: no source account, no sender, no source balance. */
+    private PaymentEvent depositEvent() {
+        return new PaymentEvent(
+                TX, null, UUID.randomUUID(),
+                null, "000000000002",
+                null, RECIPIENT,
+                new BigDecimal("500.0000"),
+                null, new BigDecimal("625.0000"),
+                "DEPOSIT", Instant.now());
+    }
+
     @Test
     void bothPartiesAreNotifiedOnAFirstDelivery() {
         when(processedEvents.existsById(TX)).thenReturn(false);
@@ -130,6 +141,49 @@ class PaymentEventConsumerTest {
         consumer.consume(event());
 
         verify(notificationService, org.mockito.Mockito.times(2)).create(any(), anyString(), any());
+    }
+
+    /**
+     * A deposit is money entering the system: no source account, no sender, and every {@code from_*}
+     * field on the event is null. Reading them unguarded is an NPE — and now that failures propagate
+     * rather than being swallowed, that NPE would retry the event and dead-letter it.
+     */
+    @Test
+    void aDepositNotifiesOnlyTheRecipient() {
+        when(processedEvents.existsById(TX)).thenReturn(false);
+
+        consumer.consume(depositEvent());
+
+        verify(notificationService).create(eq(RECIPIENT), anyString(), eq(NotificationType.PAYMENT_RECEIVED));
+        verify(notificationService, never()).create(any(), anyString(), eq(NotificationType.PAYMENT_SENT));
+    }
+
+    /** "from account null" is what the transfer wording produces when there is no source. */
+    @Test
+    void aDepositIsWordedWithoutASourceAccount() {
+        when(processedEvents.existsById(TX)).thenReturn(false);
+
+        consumer.consume(depositEvent());
+
+        ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+        verify(notificationService).create(eq(RECIPIENT), message.capture(), any());
+        assertThat(message.getValue())
+                .contains("$500.00")
+                .contains("000000000002")
+                .doesNotContain("null");
+    }
+
+    /** Only the recipient has a balance to update, and pushing to a null user id would throw. */
+    @Test
+    void aDepositPushesOnlyToTheRecipient() {
+        when(processedEvents.existsById(TX)).thenReturn(false);
+
+        consumer.consume(depositEvent());
+
+        verify(messagingTemplate, org.mockito.Mockito.times(2))
+                .convertAndSendToUser(eq(RECIPIENT.toString()), anyString(), any());
+        verify(messagingTemplate, never())
+                .convertAndSendToUser(eq(null), anyString(), any());
     }
 
     /** Money is rendered to cents; an unrounded BigDecimal would surface as "$25.005". */

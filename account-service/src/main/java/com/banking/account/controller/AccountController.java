@@ -2,7 +2,6 @@ package com.banking.account.controller;
 
 import com.banking.account.dto.AccountResponse;
 import com.banking.account.dto.CreateAccountRequest;
-import com.banking.account.dto.DepositRequest;
 import com.banking.account.dto.TransactionResponse;
 import com.banking.account.service.AccountService;
 import jakarta.validation.Valid;
@@ -38,12 +37,6 @@ public class AccountController {
     @GetMapping("/{id}")
     public ResponseEntity<AccountResponse> get(@PathVariable UUID id) {
         return ResponseEntity.ok(accountService.getAccount(id));
-    }
-
-    @PostMapping("/{id}/deposit")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<AccountResponse> deposit(@PathVariable UUID id, @Valid @RequestBody DepositRequest request) {
-        return ResponseEntity.ok(accountService.deposit(id, request.amount()));
     }
 
     @DeleteMapping("/{id}")

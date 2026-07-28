@@ -1,5 +1,6 @@
 package com.banking.payment.client;
 
+import com.banking.events.DepositExecutionRequest;
 import com.banking.events.TransferExecutionRequest;
 import com.banking.events.TransferExecutionResult;
 import com.banking.payment.config.FeignConfig;
@@ -26,8 +27,18 @@ public interface AccountServiceClient {
     TransferExecutionResult executeTransfer(@RequestBody TransferExecutionRequest request);
 
     /**
-     * Asks whether a transfer with this idempotency key committed. 404 means it did not — the log
-     * row is written in the same transaction as the balance change, so its absence is conclusive.
+     * Credits an account from outside the system. Idempotent on the same key as a transfer, and
+     * against the same log — so the recovery path below covers deposits without a second lookup.
+     */
+    @PostMapping("/internal/accounts/execute-deposit")
+    @CircuitBreaker(name = "account-service")
+    @Retry(name = "account-service")
+    TransferExecutionResult executeDeposit(@RequestBody DepositExecutionRequest request);
+
+    /**
+     * Asks whether money moved for this idempotency key — transfer or deposit. 404 means it did
+     * not: the log row is written in the same transaction as the balance change, so its absence is
+     * conclusive.
      *
      * <p>No {@code @Retry}: the recovery poller runs on a schedule and will simply ask again on its
      * next tick, so retrying inside a call it makes while holding row locks buys nothing.

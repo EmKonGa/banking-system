@@ -26,9 +26,6 @@ export class AccountService {
     );
   }
 
-  deposit(id: string, amount: number): Observable<Account> {
-    return this.http.post<Account>(`/api/accounts/${id}/deposit`, { amount });
-  }
 
   deleteAccount(id: string): Observable<void> {
     return this.http.delete<void>(`/api/accounts/${id}`);

@@ -5,6 +5,7 @@ import com.banking.common.security.JwtService;
 import com.banking.common.security.TokenBlacklistService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -14,6 +15,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @EnableWebSecurity
+// Required for @PreAuthorize on PaymentController.deposit — without it the annotation is inert and
+// the endpoint silently accepts any authenticated user.
+@EnableMethodSecurity
 public class SecurityConfig {
 
     @Bean
