@@ -52,9 +52,18 @@ spring:
       group-id: notification-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      # ErrorHandlingDeserializer wraps the real one so a malformed payload surfaces as a failed
+      # record the error handler can dead-letter, instead of throwing inside the container before
+      # the listener runs — which retries the same poison message forever and blocks the partition.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
         spring.json.trusted.packages: "com.banking.events"
+    # Producer config exists only so the dead-letter template has somewhere to publish;
+    # notification-service produces no events of its own.
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
 server:
   port: 8084
