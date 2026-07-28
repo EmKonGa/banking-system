@@ -10,6 +10,7 @@ import { InputNumber } from 'primeng/inputnumber';
 import { ProgressSpinner } from 'primeng/progressspinner';
 import { FormsModule } from '@angular/forms';
 import { AccountService } from '../../core/services/account.service';
+import { PaymentService } from '../../core/services/payment.service';
 import { AuthService } from '../../core/services/auth.service';
 import { WebSocketService } from '../../core/services/websocket.service';
 import { Account, AccountType, Transaction } from '../../core/models';
@@ -22,6 +23,7 @@ import { Account, AccountType, Transaction } from '../../core/models';
 })
 export class AccountsPage implements OnInit {
   private accountSvc = inject(AccountService);
+  private paymentSvc = inject(PaymentService);
   private authSvc = inject(AuthService);
   private wsSvc = inject(WebSocketService);
 
@@ -38,6 +40,7 @@ export class AccountsPage implements OnInit {
   depositAccount = signal<Account | null>(null);
   depositAmount = signal<number>(0);
   depositing = signal(false);
+  private pendingDepositKey: string | null = null;
 
   isAdmin = this.authSvc.isAdmin();
 
@@ -125,10 +128,25 @@ export class AccountsPage implements OnInit {
     const account = this.depositAccount();
     if (!account || this.depositAmount() <= 0) return;
     this.depositing.set(true);
-    this.accountSvc.deposit(account.id, this.depositAmount()).subscribe({
-      next: (updated) => {
-        this.accounts.update(list => list.map(a => a.id === updated.id ? updated : a));
-        if (this.selectedAccount()?.id === updated.id) this.selectedAccount.set(updated);
+
+    // Generate once per deposit intent and reuse on retry, same contract as a transfer: a fresh key
+    // per attempt is what turns a timeout retry into a second credit.
+    if (!this.pendingDepositKey) {
+      this.pendingDepositKey = crypto.randomUUID();
+    }
+
+    this.paymentSvc.deposit({
+      toAccountNumber: account.accountNumber,
+      amount: this.depositAmount(),
+      idempotencyKey: this.pendingDepositKey
+    }).subscribe({
+      // The response is the ledger entry now, not the account, so the new balance is re-read.
+      next: () => {
+        this.accountSvc.getAccount(account.id).subscribe(updated => {
+          this.accounts.update(list => list.map(a => a.id === updated.id ? updated : a));
+          if (this.selectedAccount()?.id === updated.id) this.selectedAccount.set(updated);
+        });
+        this.pendingDepositKey = null;
         this.showDepositDialog.set(false);
         this.depositing.set(false);
       },

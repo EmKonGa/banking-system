@@ -30,7 +30,7 @@ export interface CreateAccountRequest {
   type: AccountType;
 }
 
-export type TransactionType = 'CREDIT' | 'DEBIT' | 'TRANSFER';
+export type TransactionType = 'CREDIT' | 'DEBIT' | 'TRANSFER' | 'DEPOSIT';
 export type TransactionStatus = 'PENDING' | 'COMPLETED' | 'FAILED';
 
 export interface Transaction {
@@ -38,7 +38,7 @@ export interface Transaction {
   type: TransactionType;
   amount: number;
   status: TransactionStatus;
-  fromAccountNumber: string;
+  fromAccountNumber: string | null;
   toAccountNumber: string;
   description: string;
   createdAt: string;
@@ -50,6 +50,13 @@ export interface TransferRequest {
   amount: number;
   description?: string;
   idempotencyKey?: string;
+}
+
+export interface DepositRequest {
+  toAccountNumber: string;
+  amount: number;
+  description?: string;
+  idempotencyKey: string;
 }
 
 export interface BalanceUpdate {

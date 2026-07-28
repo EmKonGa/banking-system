@@ -22,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
@@ -64,19 +63,6 @@ public class AccountService {
         return findOwnedAccount(id).toResponse();
     }
 
-    @Transactional
-    public AccountResponse deposit(UUID accountId, BigDecimal amount) {
-        Account account = accountRepository.findById(accountId)
-                .orElseThrow(() -> new AppException("Account not found", HttpStatus.NOT_FOUND));
-        if (account.getStatus() != AccountStatus.ACTIVE) {
-            throw new AppException("Account is not active", HttpStatus.BAD_REQUEST);
-        }
-        account.setBalance(account.getBalance().add(amount));
-        Account saved = accountRepository.save(account);
-        events.publishEvent(AccountsChangedEvent.of(saved.getId(), saved.getUserId()));
-        return AccountResponse.from(saved);
-    }
-
     /**
      * Reads through the cache, then authorizes. The ownership check runs on every call — hit or
      * miss — so a cached entry can never be a way around it. This is why the cache stores
@@ -90,12 +76,29 @@ public class AccountService {
         return account;
     }
 
+    /**
+     * Closes an account only once it holds no money.
+     *
+     * <p>It used to close unconditionally, which orphaned whatever balance was left: the money stays
+     * on a row nothing can reach — every balance-changing query is predicated on
+     * {@code status = 'ACTIVE'} — while no ledger entry records it leaving. A reconciliation pass
+     * comparing balances against the ledger reports that as money destroyed, and it would be right.
+     *
+     * <p>Emptying the account first is a transfer, which is ledgered. Closing is not a way to move
+     * money.
+     */
     @Transactional
     public void closeAccount(UUID accountId) {
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new AppException("Account not found", HttpStatus.NOT_FOUND));
-        account.setStatus(AccountStatus.CLOSED);
-        accountRepository.save(account);
+
+        // The account exists, so the only way this updates nothing is a non-zero balance —
+        // either the one read above, or one that arrived while this was running.
+        if (accountRepository.closeIfEmpty(accountId) == 0) {
+            throw new AppException("Cannot close an account that still holds a balance",
+                    HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+
         events.publishEvent(AccountsChangedEvent.of(account.getId(), account.getUserId()));
     }
 

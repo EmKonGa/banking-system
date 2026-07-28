@@ -4,6 +4,7 @@ import com.banking.account.event.AccountsChangedEvent;
 import com.banking.account.entity.Account;
 import com.banking.account.entity.AccountStatus;
 import com.banking.account.entity.AccountTransferLog;
+import com.banking.account.entity.MovementType;
 import com.banking.account.repository.AccountRepository;
 import com.banking.account.repository.AccountTransferLogRepository;
 import com.banking.common.exception.AppException;
@@ -79,6 +80,7 @@ public class InternalTransferService {
         // catches and re-reads the committed result.
         transferLogRepository.save(AccountTransferLog.builder()
                 .idempotencyKey(request.idempotencyKey())
+                .type(MovementType.TRANSFER)
                 .fromAccountId(from.getId())
                 .toAccountId(to.getId())
                 .fromUserId(from.getUserId())

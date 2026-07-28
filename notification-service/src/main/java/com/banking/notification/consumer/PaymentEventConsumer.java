@@ -53,17 +53,25 @@ public class PaymentEventConsumer {
 
         String amount = event.amount().setScale(2, RoundingMode.HALF_UP).toPlainString();
 
-        notificationService.create(
-                event.fromUserId(),
-                String.format("You sent $%s from account %s to account %s",
-                        amount, event.fromAccountNumber(), event.toAccountNumber()),
-                NotificationType.PAYMENT_SENT
-        );
+        // A deposit is money entering the system: there is no sender to notify, and every from_*
+        // field on the event is null. Reading them unguarded is an NPE, which — now that failures
+        // propagate — would retry the event and dead-letter it.
+        if (hasSender(event)) {
+            notificationService.create(
+                    event.fromUserId(),
+                    String.format("You sent $%s from account %s to account %s",
+                            amount, event.fromAccountNumber(), event.toAccountNumber()),
+                    NotificationType.PAYMENT_SENT
+            );
+        }
 
         notificationService.create(
                 event.toUserId(),
-                String.format("You received $%s to account %s from account %s",
-                        amount, event.toAccountNumber(), event.fromAccountNumber()),
+                hasSender(event)
+                        ? String.format("You received $%s to account %s from account %s",
+                                amount, event.toAccountNumber(), event.fromAccountNumber())
+                        : String.format("A deposit of $%s was credited to account %s",
+                                amount, event.toAccountNumber()),
                 NotificationType.PAYMENT_RECEIVED
         );
 
@@ -96,8 +104,6 @@ public class PaymentEventConsumer {
      */
     private void pushBalanceAndTransaction(PaymentEvent event) {
         try {
-            BalanceUpdate fromBalance = new BalanceUpdate(
-                    event.fromAccountId(), event.fromAccountNumber(), event.fromAccountBalance());
             BalanceUpdate toBalance = new BalanceUpdate(
                     event.toAccountId(), event.toAccountNumber(), event.toAccountBalance());
 
@@ -110,12 +116,24 @@ public class PaymentEventConsumer {
                     event.timestamp()
             );
 
-            messagingTemplate.convertAndSendToUser(event.fromUserId().toString(), "/queue/balance", fromBalance);
+            if (hasSender(event)) {
+                BalanceUpdate fromBalance = new BalanceUpdate(
+                        event.fromAccountId(), event.fromAccountNumber(), event.fromAccountBalance());
+                messagingTemplate.convertAndSendToUser(event.fromUserId().toString(), "/queue/balance", fromBalance);
+                messagingTemplate.convertAndSendToUser(event.fromUserId().toString(), "/queue/transaction", tx);
+            }
             messagingTemplate.convertAndSendToUser(event.toUserId().toString(), "/queue/balance", toBalance);
-            messagingTemplate.convertAndSendToUser(event.fromUserId().toString(), "/queue/transaction", tx);
             messagingTemplate.convertAndSendToUser(event.toUserId().toString(), "/queue/transaction", tx);
         } catch (Exception e) {
             log.warn("WebSocket push failed for event {}: {}", event.transactionId(), e.getMessage());
         }
+    }
+
+    /**
+     * Distinguishes a transfer from a deposit by the thing that actually differs — whether money
+     * came from an account inside the system — rather than by string-matching the event's type.
+     */
+    private boolean hasSender(PaymentEvent event) {
+        return event.fromUserId() != null;
     }
 }

@@ -2,9 +2,11 @@ package com.banking.payment.service;
 
 import com.banking.common.exception.AppException;
 import com.banking.common.security.JwtPrincipal;
+import com.banking.events.DepositExecutionRequest;
 import com.banking.events.TransferExecutionRequest;
 import com.banking.events.TransferExecutionResult;
 import com.banking.payment.client.AccountServiceClient;
+import com.banking.payment.dto.DepositRequest;
 import com.banking.payment.dto.TransactionResponse;
 import com.banking.payment.dto.TransferRequest;
 import com.banking.payment.entity.Transaction;
@@ -23,6 +25,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
@@ -43,10 +46,7 @@ public class PaymentService {
      */
     public TransactionResponse transfer(TransferRequest request) {
         JwtPrincipal principal = currentPrincipal();
-        UUID idempotencyKey = request.idempotencyKey();
-        if (idempotencyKey == null) {
-            throw new AppException("idempotencyKey is required", HttpStatus.BAD_REQUEST);
-        }
+        UUID idempotencyKey = requireIdempotencyKey(request.idempotencyKey());
 
         Transaction intent;
         try {
@@ -56,14 +56,58 @@ public class PaymentService {
             return replayOf(idempotencyKey);
         }
 
+        return executeAndSettle(intent, () -> accountServiceClient.executeTransfer(
+                new TransferExecutionRequest(
+                        request.fromAccountId(),
+                        request.toAccountNumber(),
+                        request.amount(),
+                        idempotencyKey,
+                        principal.id())));
+    }
+
+    /**
+     * Money entering the system, and a saga for exactly the reason a transfer is one: the credit
+     * commits in account-service and the ledger row commits here.
+     *
+     * <p>Deposits used to be a balance mutation in account-service that wrote no ledger row, no
+     * event and no notification. That made them invisible in transaction history and made the
+     * reconciliation invariant {@code sum(debits) == sum(credits) == sum(balance deltas)}
+     * uncomputable — every deposit read as money created from nothing.
+     *
+     * <p>No {@code fromUserId}: the caller is an operator crediting someone else's account, not a
+     * party to the movement. The ledger row's {@code toUserId} comes back from account-service at
+     * settlement, which is what puts the deposit in the <em>recipient's</em> history.
+     */
+    public TransactionResponse deposit(DepositRequest request) {
+        UUID idempotencyKey = requireIdempotencyKey(request.idempotencyKey());
+
+        Transaction intent;
+        try {
+            intent = ledger.openDepositIntent(request);
+        } catch (DataIntegrityViolationException e) {
+            return replayOf(idempotencyKey);
+        }
+
+        return executeAndSettle(intent, () -> accountServiceClient.executeDeposit(
+                new DepositExecutionRequest(
+                        request.toAccountNumber(),
+                        request.amount(),
+                        idempotencyKey)));
+    }
+
+    /**
+     * The half of the saga that is identical for every kind of movement: ask account-service to move
+     * the money, then settle the already-committed intent by what came back.
+     *
+     * <p>The classification below is the crux, and it is why this is shared rather than duplicated
+     * per movement type — a second copy is a second place for the indeterminate case to be got
+     * wrong.
+     */
+    private TransactionResponse executeAndSettle(Transaction intent,
+                                                 Supplier<TransferExecutionResult> execute) {
         TransferExecutionResult result;
         try {
-            result = accountServiceClient.executeTransfer(new TransferExecutionRequest(
-                    request.fromAccountId(),
-                    request.toAccountNumber(),
-                    request.amount(),
-                    idempotencyKey,
-                    principal.id()));
+            result = execute.get();
         } catch (FeignException e) {
             if (isDefiniteRejection(e)) {
                 AppException rejection = toAppException(e);
@@ -77,6 +121,13 @@ public class PaymentService {
         }
 
         return TransactionResponse.from(ledger.settleCompleted(intent.getId(), result));
+    }
+
+    private UUID requireIdempotencyKey(UUID idempotencyKey) {
+        if (idempotencyKey == null) {
+            throw new AppException("idempotencyKey is required", HttpStatus.BAD_REQUEST);
+        }
+        return idempotencyKey;
     }
 
     /**

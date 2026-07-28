@@ -3,6 +3,7 @@ package com.banking.payment.service;
 import com.banking.common.exception.AppException;
 import com.banking.events.PaymentEvent;
 import com.banking.events.TransferExecutionResult;
+import com.banking.payment.dto.DepositRequest;
 import com.banking.payment.dto.TransferRequest;
 import com.banking.payment.entity.OutboxEvent;
 import com.banking.payment.entity.Transaction;
@@ -70,8 +71,28 @@ public class TransferLedger {
     }
 
     /**
+     * Records a deposit before the money is credited, for the same reason a transfer's intent is
+     * written first: without a committed row, a crash mid-flight leaves money that entered the
+     * system with nothing in the ledger to account for it.
+     *
+     * <p>Every {@code from_*} field stays null — a deposit has no source account, and that is what
+     * a reconciliation pass needs to see rather than a self-referential entry.
+     */
+    @Transactional
+    public Transaction openDepositIntent(DepositRequest request) {
+        return transactionRepository.save(Transaction.builder()
+                .idempotencyKey(request.idempotencyKey())
+                .toAccountNumber(request.toAccountNumber())
+                .amount(request.amount())
+                .type(TransactionType.DEPOSIT)
+                .status(TransactionStatus.PENDING)
+                .description(request.description())
+                .build());
+    }
+
+    /**
      * Completes the intent with what account-service actually did, and writes the outbox event in
-     * the same transaction — the event must not become visible for a transfer whose ledger row
+     * the same transaction — the event must not become visible for a movement whose ledger row
      * failed to commit.
      */
     @Transactional
@@ -134,7 +155,9 @@ public class TransferLedger {
                 tx.getAmount(),
                 result.fromBalance(),
                 result.toBalance(),
-                TransactionType.TRANSFER.name(),
+                // The row's own type, not a constant: a deposit published as a TRANSFER would tell
+                // the consumer to notify a sender that does not exist.
+                tx.getType().name(),
                 Instant.now()
         );
         try {

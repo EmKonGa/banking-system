@@ -36,4 +36,12 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     @Modifying(clearAutomatically = true)
     @Query("UPDATE Account a SET a.balance = a.balance + :amount WHERE a.id = :id AND a.status = 'ACTIVE'")
     int addBalance(@Param("id") UUID id, @Param("amount") BigDecimal amount);
+
+    // Returns 1 if the account was closed, 0 if it still holds money. Conditional for the same
+    // reason the two above are: reading the balance and then writing the status would let a credit
+    // land in between and close an account that is no longer empty. Once CLOSED the status
+    // predicates on deductBalance/addBalance keep any further money out.
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Account a SET a.status = 'CLOSED' WHERE a.id = :id AND a.balance = 0")
+    int closeIfEmpty(@Param("id") UUID id);
 }

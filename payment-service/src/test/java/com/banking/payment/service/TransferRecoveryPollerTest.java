@@ -131,7 +131,7 @@ class TransferRecoveryPollerTest {
 
         poller.settleStrandedTransfers();
 
-        verify(ledger).settleFailed(eq(INTENT_ID), contains("no matching transfer"));
+        verify(ledger).settleFailed(eq(INTENT_ID), contains("no matching movement"));
     }
 
     /**
