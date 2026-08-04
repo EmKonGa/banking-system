@@ -1,0 +1,124 @@
+spring:
+  application:
+    name: reconciliation-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/banking_db?currentSchema=banking_reconciliation
+    username: ${DB_USER:banking_user}
+    password: ${DB_PASSWORD:banking_pass}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      # Smaller pool than the request-serving services: this one runs a single scheduled sweep and
+      # an operator-facing read endpoint. It shares a Postgres with them, and pool slots it holds
+      # idle are slots the money path cannot use.
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  flyway:
+    schemas: banking_reconciliation
+    default-schema: banking_reconciliation
+
+  jpa:
+    # The sweep holds a transaction across no network calls — snapshots are fetched first, then
+    # recorded — but OSIV would still pin a connection for the length of each HTTP response.
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: banking_reconciliation
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:redis_pass}
+      connect-timeout: 3s
+      timeout: 2s
+    web:
+      pageable:
+        max-page-size: 500
+        default-page-size: 20
+
+server:
+  port: 8085
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-secret-change-in-production-must-be-long-enough}
+    access-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:900000}
+    refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+
+internal:
+  secret: ${INTERNAL_SECRET:internal-secret-change-me}
+
+reconciliation:
+  # Five minutes: the sweep reads every account and every ledger row, so it is not cheap, and a
+  # discrepancy that matters does not stop mattering in the meantime. Confirmation needs two passes,
+  # which puts the alert ten minutes behind the breakage — a deliberate trade against false alarms.
+  sweep-interval-ms: ${RECONCILIATION_SWEEP_INTERVAL_MS:300000}
+  # Long enough for the services being audited to finish starting; a sweep before they answer just
+  # aborts, and would push the first useful pass out by a whole interval.
+  initial-delay-ms: ${RECONCILIATION_INITIAL_DELAY_MS:60000}
+  page-size: ${RECONCILIATION_PAGE_SIZE:200}
+  # Comfortably past payment-service's own 900s write-off window, so an intent the recovery poller
+  # is still entitled to be working on is never reported as stuck.
+  stuck-intent-seconds: ${RECONCILIATION_STUCK_INTENT_SECONDS:1800}
+  max-keys: ${RECONCILIATION_MAX_KEYS:200000}
+
+services:
+  account-service:
+    url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+  payment-service:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,circuitbreakers,retries
+  health:
+    circuitbreakers:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_ENDPOINT:http://localhost:4318/v1/traces}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      # No retry instances anywhere in this service, deliberately. The sweep runs on a schedule and
+      # asks again on its next pass; retrying inside a pass only widens the interval over which the
+      # two sides are read, which is the very thing that manufactures false discrepancies.
+      account-service:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 60s
+        record-exceptions:
+          - feign.FeignException
+          - java.net.ConnectException
+          - java.util.concurrent.TimeoutException
+        ignore-exceptions:
+          - com.banking.common.exception.AppException
+      payment-service:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 60s
+        record-exceptions:
+          - feign.FeignException
+          - java.net.ConnectException
+          - java.util.concurrent.TimeoutException
+        ignore-exceptions:
+          - com.banking.common.exception.AppException

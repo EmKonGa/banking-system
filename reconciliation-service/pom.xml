@@ -11,9 +11,9 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>payment-service</artifactId>
-    <name>payment-service</name>
-    <description>Payment transfers, transaction ledger, and Kafka outbox microservice</description>
+    <artifactId>reconciliation-service</artifactId>
+    <name>reconciliation-service</name>
+    <description>Independent auditor: compares account balances against the payment ledger</description>
 
     <dependencies>
         <dependency>
@@ -45,13 +45,7 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- Kafka producer (outbox poller) -->
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
-
-        <!-- Feign for calling account-service -->
+        <!-- Feign for pulling snapshots from account-service and payment-service -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
@@ -74,9 +68,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Testcontainers: the reconciliation aggregate is native SQL with a UNION ALL and an
-             interface projection, which only proves out against a real PostgreSQL (versions
-             from the Boot BOM) -->
+        <!-- Testcontainers: proves the migration and the entity agree under ddl-auto=validate -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-testcontainers</artifactId>

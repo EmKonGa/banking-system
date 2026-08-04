@@ -1,0 +1,63 @@
+groups:
+  - name: reconciliation
+    rules:
+      # ---------------------------------------------------------------------------------------
+      # The system says money is wrong.
+      # ---------------------------------------------------------------------------------------
+
+      # No `for:` clause, deliberately. A CONFIRMED finding has already survived two independent
+      # sweeps — ten minutes at the default interval — which is exactly the debounce a `for:` would
+      # add, and it is a better debounce: it filters on the discrepancy still being real rather than
+      # on the alert still being loud. SUSPECTED is not alerted on at all; most first sightings are
+      # money that was in flight while the two sides were read.
+      - alert: ReconciliationConfirmedDiscrepancy
+        expr: reconciliation_confirmed_findings > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Account balances disagree with the ledger ({{ $value }} confirmed)"
+          description: >-
+            A discrepancy has survived two consecutive sweeps, so it is not an artefact of a transfer
+            committing mid-sweep. GET /api/reconciliation/findings (ADMIN) for the subjects and
+            amounts. The reconciler only ever reports — nothing has been or will be auto-corrected.
+
+      # ---------------------------------------------------------------------------------------
+      # The system cannot say whether money is wrong. This is the more dangerous state: the two
+      # gauges above are read from the findings register, so when sweeps stop they hold whatever was
+      # last true. A clean register plus a dead sweeper is indistinguishable from a healthy system.
+      # ---------------------------------------------------------------------------------------
+
+      # Covers the sweeper failing while the process is still up and scraping: the key-set ceiling,
+      # account-service unreachable, an unhandled bug in a pass. An aborted sweep records nothing at
+      # all, which is what leaves this timestamp behind.
+      #
+      # 1800s is six missed sweeps at the default 300s interval — long enough that a single
+      # dependency blip does not page, short enough that the auditor is never quietly off for an hour.
+      - alert: ReconciliationSweeperStopped
+        expr: time() - reconciliation_last_successful_sweep_timestamp_seconds > 1800
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reconciliation sweeps have stopped completing"
+          description: >-
+            No sweep has finished in over 30 minutes, so nothing is currently checking balances
+            against the ledger. Findings gauges are stale and must not be read as healthy. Check
+            reconciliation-service logs for "[RECON] sweep aborted" and for the max-keys ceiling
+            warning, which makes every subsequent sweep abort until a C2 watermark is added.
+            A value of 0 means no sweep has *ever* completed — expected briefly after a first deploy.
+
+      # The gap the rule above cannot cover. If the process is down or unscrapable, the gauge is not
+      # ingested at all; Prometheus serves the last sample for 5 minutes and then marks the series
+      # stale, at which point `time() - <gauge>` returns no data and the staleness alert silently
+      # stops firing. A hard-down auditor would otherwise be the quietest failure of the three.
+      - alert: ReconciliationServiceDown
+        expr: up{job="reconciliation-service"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "reconciliation-service is not being scraped"
+          description: >-
+            The auditor is down or unreachable. Nothing is checking that balances match the ledger,
+            and the staleness alert cannot fire while its own metric is absent.

@@ -61,6 +61,12 @@ spring:
           predicates:
             - Path=/api/notifications/**
 
+        # Operator-facing only; the ADMIN check is enforced by reconciliation-service itself.
+        - id: reconciliation-service
+          uri: ${RECONCILIATION_SERVICE_URL:http://localhost:8085}
+          predicates:
+            - Path=/api/reconciliation/**
+
 server:
   port: 8080
 

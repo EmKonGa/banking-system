@@ -15,12 +15,12 @@ COPY banking-common/src banking-common/src
 RUN mvn install -pl banking-events,banking-common -DskipTests -q
 
 FROM shared AS build
-COPY auth-service/src auth-service/src
-RUN mvn package -pl banking-events,banking-common,auth-service -DskipTests
+COPY reconciliation-service/src reconciliation-service/src
+RUN mvn package -pl banking-events,banking-common,reconciliation-service -DskipTests
 
 FROM eclipse-temurin:21-jre-jammy
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /workspace/auth-service/target/auth-service-*.jar app.jar
-EXPOSE 8081
+COPY --from=build /workspace/reconciliation-service/target/reconciliation-service-*.jar app.jar
+EXPOSE 8085
 ENTRYPOINT ["java", "-jar", "app.jar"]
