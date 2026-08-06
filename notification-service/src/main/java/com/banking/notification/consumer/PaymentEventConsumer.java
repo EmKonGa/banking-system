@@ -5,12 +5,12 @@ import com.banking.events.PaymentEvent;
 import com.banking.events.TransactionUpdate;
 import com.banking.notification.entity.NotificationType;
 import com.banking.notification.entity.ProcessedEvent;
+import com.banking.notification.relay.WebSocketRelay;
 import com.banking.notification.repository.ProcessedEventRepository;
 import com.banking.notification.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -25,7 +25,7 @@ public class PaymentEventConsumer {
 
     private final NotificationService notificationService;
     private final ProcessedEventRepository processedEvents;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final WebSocketRelay relay;
 
     /**
      * Handles a payment event exactly once per transaction, and lets failures escape.
@@ -119,11 +119,11 @@ public class PaymentEventConsumer {
             if (hasSender(event)) {
                 BalanceUpdate fromBalance = new BalanceUpdate(
                         event.fromAccountId(), event.fromAccountNumber(), event.fromAccountBalance());
-                messagingTemplate.convertAndSendToUser(event.fromUserId().toString(), "/queue/balance", fromBalance);
-                messagingTemplate.convertAndSendToUser(event.fromUserId().toString(), "/queue/transaction", tx);
+                relay.publish(event.fromUserId().toString(), "/queue/balance", fromBalance);
+                relay.publish(event.fromUserId().toString(), "/queue/transaction", tx);
             }
-            messagingTemplate.convertAndSendToUser(event.toUserId().toString(), "/queue/balance", toBalance);
-            messagingTemplate.convertAndSendToUser(event.toUserId().toString(), "/queue/transaction", tx);
+            relay.publish(event.toUserId().toString(), "/queue/balance", toBalance);
+            relay.publish(event.toUserId().toString(), "/queue/transaction", tx);
         } catch (Exception e) {
             log.warn("WebSocket push failed for event {}: {}", event.transactionId(), e.getMessage());
         }

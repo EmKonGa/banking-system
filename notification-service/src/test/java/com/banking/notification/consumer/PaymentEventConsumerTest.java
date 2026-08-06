@@ -3,6 +3,7 @@ package com.banking.notification.consumer;
 import com.banking.events.PaymentEvent;
 import com.banking.notification.entity.NotificationType;
 import com.banking.notification.entity.ProcessedEvent;
+import com.banking.notification.relay.WebSocketRelay;
 import com.banking.notification.repository.ProcessedEventRepository;
 import com.banking.notification.service.NotificationService;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,7 +12,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -39,7 +39,7 @@ class PaymentEventConsumerTest {
 
     @Mock NotificationService notificationService;
     @Mock ProcessedEventRepository processedEvents;
-    @Mock SimpMessagingTemplate messagingTemplate;
+    @Mock WebSocketRelay relay;
 
     PaymentEventConsumer consumer;
 
@@ -49,7 +49,7 @@ class PaymentEventConsumerTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new PaymentEventConsumer(notificationService, processedEvents, messagingTemplate);
+        consumer = new PaymentEventConsumer(notificationService, processedEvents, relay);
     }
 
     private PaymentEvent event() {
@@ -93,7 +93,7 @@ class PaymentEventConsumerTest {
 
         consumer.consume(event());
 
-        verifyNoInteractions(notificationService, messagingTemplate);
+        verifyNoInteractions(notificationService, relay);
         verify(processedEvents, never()).save(any());
     }
 
@@ -136,7 +136,7 @@ class PaymentEventConsumerTest {
     void aFailedWebSocketPushDoesNotFailTheHandler() {
         when(processedEvents.existsById(TX)).thenReturn(false);
         doThrow(new IllegalStateException("no broker"))
-                .when(messagingTemplate).convertAndSendToUser(anyString(), anyString(), any());
+                .when(relay).publish(anyString(), anyString(), any());
 
         consumer.consume(event());
 
@@ -180,10 +180,10 @@ class PaymentEventConsumerTest {
 
         consumer.consume(depositEvent());
 
-        verify(messagingTemplate, org.mockito.Mockito.times(2))
-                .convertAndSendToUser(eq(RECIPIENT.toString()), anyString(), any());
-        verify(messagingTemplate, never())
-                .convertAndSendToUser(eq(null), anyString(), any());
+        verify(relay, org.mockito.Mockito.times(2))
+                .publish(eq(RECIPIENT.toString()), anyString(), any());
+        verify(relay, never())
+                .publish(eq(null), anyString(), any());
     }
 
     /** Money is rendered to cents; an unrounded BigDecimal would surface as "$25.005". */
