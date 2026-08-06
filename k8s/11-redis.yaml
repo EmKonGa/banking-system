@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: banking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # $(VAR) -- not ${VAR} and not $VAR. Kubernetes expands $(NAME) in command and args from
+          # this container's own env, and there is no shell involved, so shell syntax silently
+          # passes through as a literal and Redis ends up with the string "${REDIS_PASSWORD}" as
+          # its password.
+          command: ["redis-server"]
+          args: ["--requirepass", "$(REDIS_PASSWORD)"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: REDIS_PASSWORD
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 25m
+            limits:
+              memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

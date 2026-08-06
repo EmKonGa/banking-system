@@ -1,0 +1,39 @@
+# The env vars that docker-compose.yml passes inline, split by whether they are secret.
+#
+# The split is the lesson, not the mechanism. A ConfigMap is readable by anything that can read the
+# namespace and shows up in `kubectl describe`; a Secret is at least handled as sensitive. Deciding
+# which is which forces the question compose lets you avoid, because there everything is one flat
+# `environment:` block.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: banking-config
+  namespace: banking
+data:
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_USER: banking_user
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+---
+# There is deliberately NO Secret manifest in this file.
+#
+# The first draft had one, with the placeholder values copied out of application.yml, and
+# banking-common's SecretValidator refused to start the pod: "JWT_SECRET is still a shipped
+# placeholder default". That guard was right twice over. The values were insecure, and a committed
+# Secret manifest is the wrong shape regardless of what is in it -- a Kubernetes Secret is
+# base64-encoded, not encrypted, so committing one publishes the credential to anyone with repo
+# access and to git history forever.
+#
+# So the Secret is created out of band and never enters git:
+#
+#     ./k8s/create-secrets.ps1
+#
+# which generates fresh random values and applies them with `kubectl create secret`. Run it once
+# per cluster; `kind delete cluster` discards it along with everything else.
+#
+# This is also the split worth internalising: ConfigMaps are configuration and belong in version
+# control, Secrets are credentials and do not. Compose blurs that by putting both in one
+# `environment:` block.

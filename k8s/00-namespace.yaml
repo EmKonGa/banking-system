@@ -1,0 +1,6 @@
+# Everything lands here rather than in `default`, so the whole stack can be torn down with
+# `kubectl delete namespace banking` without touching the cluster itself.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: banking

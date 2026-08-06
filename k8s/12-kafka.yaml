@@ -1,0 +1,107 @@
+# Kafka in KRaft mode -- one node acting as both broker and controller.
+#
+# Like postgres, this is deliberately a Deployment on emptyDir rather than a StatefulSet with a
+# PVC. A broker's identity and its log directory are the same thing, so this is the wrong shape for
+# the same reasons; it is left standing until the StatefulSet step makes the difference concrete.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: banking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.7.0
+          ports:
+            - containerPort: 9092
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+
+            # localhost, not the Service name. The controller has to reach its own quorum before
+            # the pod is Ready, and a Service has no endpoints until then -- pointing the quorum at
+            # "kafka:9093" would make startup depend on a Service that only starts working once
+            # startup has finished. A single-node quorum talks to itself over loopback.
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 1@localhost:9093
+
+            # Bind on all interfaces; advertise the Service name, because that is the address
+            # clients inside the cluster resolve. Advertising localhost would have every consumer
+            # dial itself. The compose file also carries an EXTERNAL listener on 9094 for host
+            # tooling; there is no host access here, so it is dropped.
+            - name: KAFKA_LISTENERS
+              value: PLAINTEXT://:9092,CONTROLLER://:9093
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: PLAINTEXT://kafka:9092
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: PLAINTEXT
+
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+            # Single broker, so nothing can be replicated anywhere. The defaults are 3 and would
+            # leave the internal topics permanently under-replicated.
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+
+            # num.partitions stays at the default of 1, matching compose. Worth being conscious of:
+            # a one-partition topic can only ever be assigned to ONE consumer in a group, so a
+            # second notification-service replica sits idle rather than sharing the load.
+            - name: KAFKA_HEAP_OPTS
+              value: -Xmx512M -Xms512M
+            - name: CLUSTER_ID
+              value: MkU3OEVBNTcwNTJENDM2Qk
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          # A TCP check, not `kafka-topics.sh --list` as the compose healthcheck uses. That script
+          # boots an entire JVM to answer, which takes longer than any sane probe timeout once the
+          # node is under load -- it timed out at 10s every time and held the pod at 0/1 while the
+          # broker underneath was serving perfectly. The probe measured JVM startup, not Kafka.
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests:
+              memory: 768Mi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - port: 9092
+      targetPort: 9092

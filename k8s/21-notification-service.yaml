@@ -1,0 +1,107 @@
+# notification-service, deliberately at 2 replicas.
+#
+# This used to be the one service in the stack that did NOT survive being replicated -- kept at 2
+# on purpose so the failure was visible rather than theoretical. Fixed 2026-08-06.
+#
+# WebSocketConfig calls enableSimpleBroker("/queue"), whose registry of "which user is connected on
+# which session" lives in the pod's heap. Two things followed from that, and they compounded:
+#
+#   1. A push issued on pod B for a user whose socket is on pod A matched no local session, so it
+#      was discarded. Silently -- convertAndSendToUser does not fail when nobody is listening.
+#   2. payment.events has one partition, so a consumer group assigns it to exactly ONE pod. The
+#      other replica consumed nothing at all. Every user connected to it was therefore permanently
+#      cut off from live updates -- not intermittently, always.
+#
+# The notification row is committed to Postgres before the push, so the REST inbox stayed correct
+# and only the live channel was lost. That is what made it dangerous: it degraded invisibly.
+#
+# Fix: com.banking.notification.relay.WebSocketRelay. Every push now goes to a Redis pub/sub
+# channel instead of straight to the local SimpMessagingTemplate; every pod (including the
+# publisher) subscribes and attempts local delivery, so whichever pod actually holds the user's
+# session is the one that delivers, regardless of which pod's Kafka consumer processed the event.
+# This is the "broker relay giving all replicas a shared user registry" fix, using Redis pub/sub
+# in place of a RabbitMQ/ActiveMQ STOMP relay because Redis is already a dependency here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: banking
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+        - name: notification-service
+          image: banking/notification-service:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: banking-config
+            - secretRef:
+                name: banking-secrets
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+            # Tempo is not deployed to this cluster, so the OTLP exporter would log a connection
+            # refusal every few seconds. Off here to keep the logs readable; the compose stack
+            # still traces normally.
+            - name: MANAGEMENT_TRACING_ENABLED
+              value: "false"
+            # See the matching note in 20-auth-service.yaml: migration runs once, upstream, as the
+            # notification-service-migrate Job -- not per pod. This service is the one actually at
+            # 2 replicas today, so this is the manifest where the race was live, not theoretical.
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+          # See the note in 20-auth-service.yaml: the default probe timeout of 1s is too tight for
+          # a JVM sharing a node with image builds, and produces failures on a healthy app.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8084
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8084
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8084
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: notification-service
+  ports:
+    - port: 8084
+      targetPort: 8084
