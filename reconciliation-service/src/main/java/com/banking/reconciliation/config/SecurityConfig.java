@@ -22,19 +22,19 @@ public class SecurityConfig {
 
     @Bean
     public ClaimsJwtAuthFilter claimsJwtAuthFilter(JwtService jwtService,
-                                                    TokenBlacklistService tokenBlacklistService) {
+                                                   TokenBlacklistService tokenBlacklistService) {
         return new ClaimsJwtAuthFilter(jwtService, tokenBlacklistService);
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                    ClaimsJwtAuthFilter jwtFilter) throws Exception {
+                                                   ClaimsJwtAuthFilter jwtFilter) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/actuator/health", "/actuator/info", "/actuator/prometheus",
+                                "/actuator/health/**", "/actuator/info", "/actuator/prometheus",
                                 "/actuator/circuitbreakers", "/actuator/retries").permitAll()
                         .anyRequest().authenticated()
                 )
