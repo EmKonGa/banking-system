@@ -1,0 +1,35 @@
+# kind create cluster --config k8s/kind-cluster.yaml
+# kind delete cluster --name banking
+#
+# Deleting and recreating takes about a minute, and that is the point of developing here rather
+# than on a VM: a broken cluster is cheaper to throw away than to repair, so you can afford to
+# break it on purpose.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: banking
+
+nodes:
+  - role: control-plane
+
+    # An Ingress controller has to land on a node that publishes 80/443 to the host. kind cannot
+    # add port mappings to a running cluster -- changing this means deleting and recreating -- so
+    # they are declared now, well before there is an Ingress to use them.
+    kubeadmConfigPatches:
+      - | 
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+
+    # Host side is 8000/8443, not 80/443. On Windows, Hyper-V reserves blocks of low ports and
+    # binding 80 fails with "an attempt was made to access a socket in a way forbidden by its
+    # access permissions" -- not a port already in use, a port the OS will not let us have.
+    # Inside the cluster the Ingress controller still listens on 80/443; only the host mapping
+    # differs, so manifests stay identical to what would run on a real cluster.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8000
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP

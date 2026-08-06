@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: banking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: banking/auth-service:dev
+          # Nothing has pushed this image to a registry -- it was built locally and side-loaded
+          # with `kind load docker-image`. The default policy for a :latest-style tag is Always,
+          # which would send kubelet to Docker Hub looking for "banking/auth-service" and fail
+          # with ErrImagePull. IfNotPresent tells it to use what the node already has.
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8081
+
+          # envFrom pulls in every key as an env var, which is what makes this work with zero
+          # application changes: the image already reads DB_HOST, REDIS_HOST and the rest from the
+          # environment, exactly as it does under compose.
+          envFrom:
+            - configMapRef:
+                name: banking-config
+            - secretRef:
+                name: banking-secrets
+
+          env:
+            # The JVM reads the container's memory limit, not the host's, but defaults to a
+            # conservative fraction of it. Without this the heap is sized far below the 512Mi
+            # limit and the process spends its life in GC while most of its allowance goes unused.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+            # Spring Boot enables the readiness/liveness health groups automatically when it
+            # detects Kubernetes. Stated explicitly rather than relying on that detection, because
+            # a probe that silently 404s marks the pod unready and the failure looks like the app.
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+            # Migration now runs exactly once, as the auth-service-migrate Job deploy.ps1 runs
+            # before this Deployment is applied -- not here. Two replicas booting Flyway themselves
+            # was safe (Flyway's own lock serialises them) but redundant: it re-ran the same check
+            # on every pod, on every rollout, racing for a lock that a single upstream Job already
+            # resolved. Disabling it here also means a scale-up adds a pod with zero migration
+            # work in its boot path, not a lock wait.
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+
+          # Three probes, three different questions. Conflating them is the usual mistake.
+          #
+          # startup:   "has it finished booting?" -- Spring Boot needs 30s+ with Flyway running.
+          #            While this is failing the other two are suspended, which is why liveness
+          #            does not need a long initialDelay. Without it, either liveness kills the
+          #            pod mid-boot forever, or you pad initialDelay so heavily that a genuinely
+          #            hung process takes minutes to be noticed.
+          # liveness:  "is it wedged?" -- failing this RESTARTS the container. It must not depend
+          #            on anything external; restarting does not fix someone else's database.
+          # readiness: "should it receive traffic?" -- failing this only removes the pod from the
+          #            Service endpoints. This is the one that replaces a discovery registry's
+          #            health checking.
+          #
+          # Both point at the health *groups*, not at /actuator/health. The aggregate endpoint
+          # includes db, redis and the circuit breakers, so a Redis blip would fail readiness on
+          # every replica at once and pull the entire service out of rotation -- turning a
+          # degraded dependency into a total outage. The readiness group reports whether this
+          # application is ready to serve, which is the question actually being asked.
+          # timeoutSeconds is set explicitly on all three because the default is ONE SECOND, which
+          # is not a safe assumption for a JVM. Measured: with Maven builds running on the host,
+          # these pods logged 17 startup-probe failures over 38 minutes -- "connection refused" and
+          # a 503 -- while the application was perfectly healthy and never restarted once. The
+          # probe was measuring CPU contention, not the app.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30 # up to 300s to boot, which a cold contended start needs
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # requests are what the scheduler reserves; limits are what the kernel enforces. Memory
+          # is deliberately request == limit: exceeding a memory limit is an immediate OOMKill,
+          # not throttling, so there is no benefit to letting it burst above what is guaranteed.
+          # CPU has no limit on purpose -- a CPU limit throttles, which mostly serves to make JVM
+          # startup slower.
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: auth-service
+  ports:
+    - port: 8081
+      targetPort: 8081
+# The name is load-bearing. Every service in this repo already calls its neighbours as
+# http://auth-service:8081 -- hardcoded in compose env vars and in the gateway's routes. Because
+# this Service is named auth-service and listens on 8081, that URL resolves here unchanged.
+#
+# That is the whole argument against adding Eureka: the discovery problem it solves is already
+# solved by naming a Service correctly, and kube-proxy load-balances across every healthy pod
+# behind this one ClusterIP without any client knowing there is more than one.

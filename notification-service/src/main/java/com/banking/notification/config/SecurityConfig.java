@@ -29,7 +29,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health", "/actuator/prometheus",
+                        .requestMatchers("/actuator/health/**", "/actuator/prometheus",
                                 "/actuator/circuitbreakers", "/actuator/retries",
                                 "/ws/**").permitAll()
                         .anyRequest().authenticated()

@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -51,4 +52,49 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
     List<Transaction> findStalePendingWithLock(@Param("cutoff") Instant cutoff);
+
+    /**
+     * What the ledger says each account should hold, for reconciliation.
+     *
+     * <p>Credits and debits are summed in two branches unioned together rather than with a
+     * {@code CASE} over one scan, because a transfer contributes to <em>two</em> different accounts
+     * from a single row — one as source, one as destination. There is no grouping key that yields
+     * both from one pass.
+     *
+     * <p>Deposits have a null {@code from_account_id}, so they contribute a credit and no debit,
+     * which is exactly the asymmetry that makes money entering the system visible here.
+     */
+    @Query(value = """
+            SELECT account_id, SUM(delta) AS net FROM (
+                SELECT to_account_id AS account_id, amount AS delta
+                  FROM transactions
+                 WHERE status = 'COMPLETED' AND to_account_id IS NOT NULL
+                UNION ALL
+                SELECT from_account_id AS account_id, -amount AS delta
+                  FROM transactions
+                 WHERE status = 'COMPLETED' AND from_account_id IS NOT NULL
+            ) legs
+            GROUP BY account_id
+            ORDER BY account_id
+            """,
+            countQuery = """
+            SELECT COUNT(DISTINCT account_id) FROM (
+                SELECT to_account_id AS account_id FROM transactions
+                 WHERE status = 'COMPLETED' AND to_account_id IS NOT NULL
+                UNION ALL
+                SELECT from_account_id AS account_id FROM transactions
+                 WHERE status = 'COMPLETED' AND from_account_id IS NOT NULL
+            ) legs
+            """,
+            nativeQuery = true)
+    Page<LedgerNetProjection> findNetByAccount(Pageable pageable);
+
+    @Query("SELECT t FROM Transaction t WHERE t.status = 'PENDING' AND t.createdAt < :cutoff")
+    Page<Transaction> findStalePending(@Param("cutoff") Instant cutoff, Pageable pageable);
+
+    /** Native projection for {@link #findNetByAccount}: JPQL cannot express the UNION ALL above. */
+    interface LedgerNetProjection {
+        UUID getAccountId();
+        BigDecimal getNet();
+    }
 }

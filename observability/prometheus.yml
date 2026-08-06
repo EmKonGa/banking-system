@@ -1,6 +1,11 @@
 global:
   scrape_interval: 15s
 
+# Rules are evaluated and visible on Prometheus' own /alerts page. There is no Alertmanager in this
+# stack yet, so a firing alert is not routed anywhere — adding one is what turns these into a page.
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: 'api-gateway'
     metrics_path: '/actuator/prometheus'
@@ -26,3 +31,13 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
     static_configs:
       - targets: ['notification-service:8084']
+
+  # Carries the only metrics that report on money being wrong:
+  #   reconciliation_confirmed_findings                       > 0  — a real discrepancy
+  #   reconciliation_last_successful_sweep_timestamp_seconds       — staleness means the auditor
+  #     has stopped, which the findings gauges cannot show on their own (they hold their last
+  #     clean value): time() - <gauge> > 1800
+  - job_name: 'reconciliation-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['reconciliation-service:8085']

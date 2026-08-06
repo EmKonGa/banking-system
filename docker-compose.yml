@@ -71,6 +71,7 @@ services:
       ACCOUNT_SERVICE_URL: http://account-service:8082
       PAYMENT_SERVICE_URL: http://payment-service:8083
       NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      RECONCILIATION_SERVICE_URL: http://reconciliation-service:8085
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
@@ -215,6 +216,44 @@ services:
       kafka:
         condition: service_healthy
 
+  reconciliation-service:
+    build:
+      context: .
+      dockerfile: reconciliation-service/Dockerfile
+    container_name: banking_reconciliation
+    # Bound to localhost only; the findings API is operator-facing and goes through the gateway.
+    ports:
+      - "127.0.0.1:8085:8085"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-banking_user}
+      DB_PASSWORD: ${DB_PASSWORD:-banking_pass}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-must-be-long-enough}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-internal-secret-change-me}
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      OTEL_EXPORTER_ENDPOINT: http://tempo:4318/v1/traces
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8085/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # The auditor is useless before the services it audits are answering, and starting it first
+      # would only fill the register with findings about snapshots it could not fetch.
+      account-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+
 #  redisinsight:
 #    image: redis/redisinsight:latest
 #    container_name: banking_redisinsight
@@ -243,6 +282,7 @@ services:
       - "9090:9090"
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml
 
   tempo:
     image: grafana/tempo:2.6.1

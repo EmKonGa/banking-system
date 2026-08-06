@@ -1,0 +1,169 @@
+# Postgres, now in the shape a database belongs in.
+#
+# This was deliberately a Deployment on an emptyDir until 2026-08-06, so that the data loss could be
+# seen before the fix was explained. It was, and it is worth recording what it actually looked like,
+# because it is nastier than "the rows go away":
+#
+#   - Deleting the pod erased not just the registered user but the entire `banking_auth` SCHEMA --
+#     Flyway's history table with it. Total time from `delete pod` to a replacement reporting
+#     1/1 Running on an empty database: 11.7 seconds.
+#   - Nothing looked broken. The new pod passed its readiness probe (an empty Postgres is a
+#     perfectly healthy Postgres), the auth-service pod stayed 1/1 Running with 0 restarts, and the
+#     only evidence was that every request failed.
+#
+# Two separate things were wrong, and StatefulSet fixes only one of them:
+#
+#   - Storage was not durable. That is the PersistentVolumeClaim's job, and a PVC can be attached to
+#     a Deployment too. This half is the actual data fix.
+#   - Identity was interchangeable. A Deployment's pods are cattle: random name suffixes, and a
+#     rolling update is free to start the replacement BEFORE the original is gone. Two Postgres
+#     processes opening one data directory is corruption, not contention -- so the moment the volume
+#     is shared and durable, the Deployment's own update strategy becomes the hazard. A StatefulSet
+#     gives ordinal identity (postgres-0), one PVC bound per ordinal and reused by the replacement
+#     pod, and at-most-one semantics for that ordinal during an update.
+#
+# So the PVC makes the data survive, and the StatefulSet makes it safe to survive.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: banking
+spec:
+  # Points at the HEADLESS Service below, not the ClusterIP one. This is required, and it is what
+  # gives the pod its stable DNS name: postgres-0.postgres-hl.banking.svc.cluster.local.
+  serviceName: postgres-hl
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      # SIGTERM to postgres means SMART shutdown: it waits for every client to disconnect on its
+      # own. App pods hold HikariCP connections open by design, so nothing disconnects, and the pod
+      # would sit here until the grace period expired and kubelet SIGKILLed it -- an unclean stop
+      # that forces WAL crash recovery on the next boot. Committed data is not lost (that is what
+      # the WAL is for), but every single restart would pay for a recovery pass. The preStop hook
+      # asks for a FAST shutdown instead: disconnect clients, checkpoint, exit cleanly.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          lifecycle:
+            preStop:
+              exec:
+                command: ["pg_ctl", "-D", "/var/lib/postgresql/data/pgdata", "-m", "fast", "-w", "stop"]
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: banking_db
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: banking-config
+                  key: DB_USER
+            # Applied by initdb ONLY, and initdb only runs on an empty data directory. On an
+            # emptyDir that was every restart; on a PVC it is exactly once, ever. Rotating this
+            # Secret therefore does NOT change the database's password -- it only changes what the
+            # applications present. deploy.ps1 -RotateSecrets issues an ALTER USER for that reason.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: DB_PASSWORD
+            # A SUBDIRECTORY of the mount, not the mount root. initdb refuses to run in a directory
+            # that is not empty, and a volume root is not reliably empty -- many provisioners leave
+            # a lost+found in it. kind's local-path happens not to, so this is insurance against
+            # the manifest moving to a real cluster: exactly the kind of difference that otherwise
+            # only shows up somewhere expensive.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          # The per-service schemas are created by the Flyway Jobs in deploy.ps1, not here. On a PVC
+          # they now already exist on the second and later deploys, so Flyway reports "up to date"
+          # instead of doing work -- which is the durability showing up in the logs.
+          readinessProbe:
+            # sh -c, because an exec probe does not run through a shell and would hand pg_isready
+            # the literal string "$POSTGRES_USER". The user and database come from the ConfigMap;
+            # hardcoding them here means a changed DB_USER fails readiness on a healthy database.
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+
+  # Declared as a TEMPLATE rather than a standalone PersistentVolumeClaim, because the claim belongs
+  # to an ordinal rather than to the workload: pod postgres-0 gets PVC data-postgres-0, and a future
+  # postgres-1 would get its own data-postgres-1. This is also why the claim OUTLIVES the
+  # StatefulSet -- deleting the StatefulSet leaves data-postgres-0 behind on purpose, so recreating
+  # it re-binds to the same data. Deleting the NAMESPACE does take it, a PVC being namespaced.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # No storageClassName: use the cluster default. In kind that is `standard`, backed by the
+        # rancher local-path provisioner, which writes to a directory on the NODE container's
+        # filesystem. Be clear about what that does and does not survive: pod deletes and host
+        # reboots yes; `kind delete cluster` no, because the node container goes and the directory
+        # with it. This is durability against the pod lifecycle, not against losing the node.
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+# Two Services, doing two different jobs.
+#
+# This one is unchanged and is what every application connects to: a normal ClusterIP Service named
+# `postgres`, so no service's DB_URL has to change. It also preserves the failure mode the apps
+# already expect -- a stable virtual IP that refuses connections while the database is down, rather
+# than a name that stops resolving. A headless Service publishes A records only for READY pods, so
+# pointing the apps at that one would turn "database restarting" into UnknownHostException, which
+# reads like a DNS or config fault rather than a dependency being down. That exact confusion already
+# cost a debugging session here once.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    # Selects pods by label. It does not reference the StatefulSet at all -- Services and workloads
+    # are only ever coupled through labels.
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# And this one exists for the StatefulSet, not for clients: `clusterIP: None` makes it headless, and
+# a headless governing Service is what the controller requires before it will hand out per-pod DNS.
+# Nothing in this stack dials postgres-0 by name today -- with one replica there is nothing to
+# distinguish -- but it is the mechanism that makes individual replicas addressable, which is the
+# whole reason a replicated database uses a StatefulSet at all.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-hl
+  namespace: banking
+  labels:
+    app: postgres
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

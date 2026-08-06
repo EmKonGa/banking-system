@@ -63,6 +63,7 @@ jobs:
           - account-service
           - payment-service
           - notification-service
+          - reconciliation-service
     steps:
       - uses: actions/checkout@v4
 
