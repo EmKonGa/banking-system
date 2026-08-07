@@ -276,6 +276,11 @@ if ($RotateSecrets -or -not $hasSecret) {
         Assert-LastExit "ALTER USER $dbUser"
     }
 
+    # Redis is on a PVC too, but needs no equivalent step: --requirepass is a startup argument read
+    # from the Secret on every boot, not state written into the volume once. The rollout restart
+    # below is the whole of its rotation. Worth stating, because "it has a PVC" is what makes the
+    # Postgres case surprising, and Redis has one now as well.
+
     if ($preExisting.Count -gt 0) {
         Write-Host ""
         Write-Host "    New credentials generated while workloads were already running." -ForegroundColor Yellow

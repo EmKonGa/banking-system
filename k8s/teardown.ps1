@@ -80,6 +80,7 @@ if ($AppOnly) {
     # directory backing it. Deleting the STATEFULSET alone would keep the claim (that is the point
     # of volumeClaimTemplates); deleting what contains it does not.
     Write-Host "    Postgres data goes with it: the PVC data-postgres-0 is in this namespace."
+    Write-Host "    So does Redis: the PVC redis-data, and with it every refresh token and blacklist entry."
     Write-Host "    The next deploy regenerates secrets, so JWT_SECRET rotates and old tokens die."
 
     Confirm-Or-Exit "Delete namespace '$ns'?"
