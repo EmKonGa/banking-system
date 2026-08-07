@@ -34,6 +34,7 @@
         <resilience4j.version>2.2.0</resilience4j.version>
         <spring-cloud.version>2023.0.3</spring-cloud.version>
         <testcontainers.version>1.21.3</testcontainers.version>
+        <shedlock.version>5.16.0</shedlock.version>
     </properties>
 
     <dependencyManagement>
@@ -55,6 +56,15 @@
                 <groupId>org.springframework.cloud</groupId>
                 <artifactId>spring-cloud-dependencies</artifactId>
                 <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- ShedLock BOM — used by reconciliation-service to keep its sweep a singleton -->
+            <dependency>
+                <groupId>net.javacrumbs.shedlock</groupId>
+                <artifactId>shedlock-bom</artifactId>
+                <version>${shedlock.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
