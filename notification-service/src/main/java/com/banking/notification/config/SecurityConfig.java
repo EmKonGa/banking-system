@@ -3,6 +3,7 @@ package com.banking.notification.config;
 import com.banking.common.security.ClaimsJwtAuthFilter;
 import com.banking.common.security.JwtService;
 import com.banking.common.security.TokenBlacklistService;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -29,6 +30,9 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // The chain runs on the ERROR dispatch too; without this an unhandled
+                        // exception forwards to /error and comes back as an empty 403.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/prometheus",
                                 "/actuator/circuitbreakers", "/actuator/retries",
                                 "/ws/**").permitAll()
