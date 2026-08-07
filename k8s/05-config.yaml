@@ -17,6 +17,17 @@ data:
   REDIS_PORT: "6379"
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
+  # Where the gateway forwards each route. These are Service DNS names, and they are the reason no
+  # discovery registry is needed: the Services are named after the services, so the URLs the repo
+  # already hardcodes resolve unchanged. Two of these point at Services that do not exist yet --
+  # a request to them fails at connect rather than at DNS, which is the honest failure and is why
+  # they are listed now rather than added service by service.
+  AUTH_SERVICE_URL: http://auth-service:8081
+  ACCOUNT_SERVICE_URL: http://account-service:8082
+  PAYMENT_SERVICE_URL: http://payment-service:8083
+  NOTIFICATION_SERVICE_URL: http://notification-service:8084
+  RECONCILIATION_SERVICE_URL: http://reconciliation-service:8085
+
 ---
 # There is deliberately NO Secret manifest in this file.
 #
