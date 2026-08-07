@@ -116,10 +116,39 @@ function Invoke-DbMigration([string]$name, [string]$schema) {
     $cmName = "$name-migrations"
     $jobName = "$name-migrate"
 
-    # `create --dry-run=client -o yaml | apply` is the standard way to get ConfigMap-from-files
-    # UPDATE semantics -- plain `kubectl create configmap` errors if it already exists, and `apply`
-    # alone can't build the key-per-file shape from a directory.
-    kubectl create configmap $cmName -n $ns --from-file="$migrationDir" --dry-run=client -o yaml | kubectl apply -f -
+    # Delete-then-create, NOT the usual `create --dry-run=client -o yaml | kubectl apply -f -`.
+    #
+    # That pipeline corrupts the SQL. Windows PowerShell 5.1 does not pipe bytes between two native
+    # executables -- it decodes kubectl's stdout into a .NET string using [Console]::OutputEncoding
+    # and re-encodes it for the next process. Any byte the console codepage cannot represent
+    # becomes a literal question mark, so every migration comment containing an em-dash reached the
+    # cluster as "???".
+    #
+    # The reason it went unnoticed for a day is the reason it is worth this comment: the damage
+    # depends on the console codepage, so it round-trips cleanly in an interactive UTF-8 terminal
+    # and mangles the file when the same script is driven non-interactively. "Works when I run it"
+    # is not evidence here.
+    #
+    # It then fails in the worst possible way. The file keeps its LENGTH (one 3-byte em-dash
+    # becomes three '?'), so nothing looks truncated, and Flyway only objects later and only
+    # against a schema that already exists -- "Migration checksum mismatch for migration version
+    # 3", pointing at a file that is perfectly correct on disk. Five migrations across four
+    # services contain non-ASCII, so this was waiting for every service still to be deployed.
+    #
+    # kubectl reads --from-file straight from disk and sends the bytes to the API server, so with
+    # no pipeline there is nothing to re-encode. Delete first because plain `create` errors if the
+    # ConfigMap exists, and `apply` alone cannot build the key-per-file shape from a directory.
+    # The gap between delete and create is safe: the Job that mounts it is created further down.
+    #
+    # To CHECK the result, mount the ConfigMap and hash it in-cluster. Do not compare
+    # `kubectl get -o json` output against the file: that output is itself re-encoded on Windows
+    # and shows mojibake for content that is byte-perfect in etcd. Verified 2026-08-07 -- the
+    # mounted file matched the file on disk exactly while the JSON did not.
+    $ErrorActionPreference = "Continue"
+    kubectl -n $ns delete configmap $cmName --ignore-not-found | Out-Null
+    $ErrorActionPreference = "Stop"
+
+    kubectl -n $ns create configmap $cmName --from-file="$migrationDir"
     Assert-LastExit "sync configmap $cmName"
 
     # Jobs are immutable once created (the pod template can't be patched), and the ConfigMap this
