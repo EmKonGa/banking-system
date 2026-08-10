@@ -1,0 +1,93 @@
+# See 20-auth-service.yaml for the reasoning shared by every service manifest here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: banking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+        - name: payment-service
+          image: banking/payment-service:dev
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8083
+
+          envFrom:
+            - configMapRef:
+                name: banking-config
+            - secretRef:
+                name: banking-secrets
+
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+
+          # This service owns two @Scheduled pollers -- OutboxPoller and TransferRecoveryPoller --
+          # and both are already safe to replicate, without a distributed lock. They claim rows with
+          # FOR UPDATE SKIP LOCKED, so a second instance takes the rows the first did not, and the
+          # work simply goes faster.
+          #
+          # Worth contrasting with reconciliation-service, which needed ShedLock for its sweep. The
+          # difference is not that one was written more carefully: outbox publishing and intent
+          # recovery are row-partitionable, so parallel workers are a feature. A reconciliation
+          # sweep is a whole-system comparison, and partitioning it is precisely what breaks it --
+          # each sweep resolves the findings the other recorded. The mechanism has to match the
+          # shape of the work, not the fact that both happen to be @Scheduled.
+          #
+          # Kept at 1 replica anyway, for node memory rather than correctness.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8083
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8083
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8083
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: payment-service
+  ports:
+    - port: 8083
+      targetPort: 8083

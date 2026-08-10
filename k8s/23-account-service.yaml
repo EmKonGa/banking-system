@@ -1,0 +1,87 @@
+# See 20-auth-service.yaml for the reasoning shared by every service manifest here: why the three
+# probes ask three different questions, why they point at the health *groups* rather than
+# /actuator/health, why timeoutSeconds is always explicit, and why memory request == limit.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+  namespace: banking
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: account-service
+  template:
+    metadata:
+      labels:
+        app: account-service
+    spec:
+      containers:
+        - name: account-service
+          image: banking/account-service:dev
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8082
+
+          envFrom:
+            - configMapRef:
+                name: banking-config
+            - secretRef:
+                name: banking-secrets
+
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+
+          # Safe to scale, and the cache is the reason to say so explicitly. accounts:: and
+          # accountsByUser:: live in Redis, not in the pod, and eviction is driven by an
+          # AFTER_COMMIT event on whichever replica handled the mutation -- so a second replica
+          # reads the same evicted state rather than serving its own stale copy. A per-pod cache
+          # would have made replication silently incorrect, exactly as the WebSocket registry did.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-service
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: account-service
+  ports:
+    - port: 8082
+      targetPort: 8082

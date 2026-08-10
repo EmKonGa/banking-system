@@ -1,0 +1,95 @@
+# See 20-auth-service.yaml for the reasoning shared by every service manifest here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reconciliation-service
+  namespace: banking
+spec:
+  # Two replicas on purpose, and this is the only manifest where the count is the point rather than
+  # a capacity decision.
+  #
+  # The sweep used to be a plain @Scheduled with no lock. Two replicas would have left the auditor
+  # structurally unable to confirm anything: resolveUnseen() resolves every finding absent from
+  # *this* sweep's observation set, one replica's set never contains the other's, so each resolves
+  # what the other just recorded and times_seen never reaches 2 -- while both keep the liveness
+  # marker fresh, so the staleness alert stays quiet. A blind auditor reporting itself healthy.
+  #
+  # ShedLock fixed that (V3__shedlock.sql, @SchedulerLock on ReconciliationSweeper.sweep). Running
+  # it at 2 here is what keeps the fix honest: a lock that is only ever exercised by one replica is
+  # a lock nobody has tested. `kubectl logs -l app=reconciliation-service | grep RECON` should show
+  # sweeps from exactly one pod at a time.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: reconciliation-service
+  template:
+    metadata:
+      labels:
+        app: reconciliation-service
+    spec:
+      containers:
+        - name: reconciliation-service
+          image: banking/reconciliation-service:dev
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8085
+
+          envFrom:
+            - configMapRef:
+                name: banking-config
+            - secretRef:
+                name: banking-secrets
+
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8085
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8085
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8085
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              # Lighter than the request-serving services: a 5-slot Hikari pool by config, one
+              # scheduled sweep, and one operator-facing read endpoint.
+              memory: 448Mi
+              cpu: 150m
+            limits:
+              memory: 448Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reconciliation-service
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: reconciliation-service
+  ports:
+    - port: 8085
+      targetPort: 8085

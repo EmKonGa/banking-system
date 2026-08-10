@@ -63,11 +63,17 @@ $services = @(
     # Schema = $null means "owns no database", not "schema not decided yet". api-gateway is the
     # only service here with nothing to migrate, so the migrate Job is skipped for it entirely.
     @{ Name = "api-gateway";          Image = "banking/api-gateway:dev";
-       Manifest = "22-api-gateway.yaml";          Timeout = 600; Schema = $null }
+       Manifest = "22-api-gateway.yaml";          Timeout = 600; Schema = $null },
+    @{ Name = "account-service";      Image = "banking/account-service:dev";
+       Manifest = "23-account-service.yaml";      Timeout = 600; Schema = "banking_account" },
+    @{ Name = "payment-service";      Image = "banking/payment-service:dev";
+       Manifest = "24-payment-service.yaml";      Timeout = 600; Schema = "banking_payment" },
+    @{ Name = "reconciliation-service"; Image = "banking/reconciliation-service:dev";
+       Manifest = "25-reconciliation-service.yaml"; Timeout = 600; Schema = "banking_reconciliation" }
 )
-# Not yet deployed to the cluster: account-service, payment-service, reconciliation-service.
-# Until they exist here, no real transfer or deposit can be exercised in-cluster -- the gateway
-# routes to them, so those paths fail at connect rather than 404.
+# The whole stack now runs in the cluster. Order is not significant -- services reach each other by
+# Service DNS and retry, so a caller deployed before its callee simply fails until the callee is
+# ready, which is what readiness gating already handles.
 
 # --- helpers -----------------------------------------------------------------------------------
 
