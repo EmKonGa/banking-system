@@ -47,7 +47,7 @@ $infra = @(
     # where nothing is actually wrong.
     @{ Manifest = "10-postgres.yaml";  Workload = "statefulset/postgres"; Timeout = 600 },
     @{ Manifest = "11-redis.yaml";     Workload = "deployment/redis";     Timeout = 600 },
-    @{ Manifest = "12-kafka.yaml";     Workload = "deployment/kafka";     Timeout = 900 }
+    @{ Manifest = "12-kafka.yaml";     Workload = "statefulset/kafka";    Timeout = 900 }
 )
 
 # Pinned, not "latest". An add-on that silently upgrades itself on the next deploy is a change
@@ -342,6 +342,25 @@ if ($RotateSecrets -or -not $hasSecret) {
 # --- 3. config + infrastructure ----------------------------------------------------------------
 
 Write-Step "Applying config and infrastructure"
+
+# Kafka was a Deployment until it moved to a StatefulSet on a PVC. Both select `app: kafka`, so a
+# leftover Deployment does not conflict with the StatefulSet -- it quietly coexists, and the
+# ClusterIP Service round-robins between a broker holding the data and one holding none. Consumers
+# would then see a topic that has messages on some connections and not others.
+#
+# `kubectl apply` cannot clean this up: the old object is a different kind under a different name in
+# the API, so nothing about applying the new manifest implies deleting it. Explicit, and idempotent
+# after the first run.
+# Probed with Test-Deployment rather than `kubectl get deployment kafka 2>$null`: PS 5.1 wraps a
+# native command's stderr in a NativeCommandError and throws under $ErrorActionPreference = "Stop",
+# so probing for an ABSENT resource by name is exactly the thing that fails. Test-K8sResource lists
+# and matches instead. This script has been bitten by that twice already.
+if (Test-Deployment "kafka") {
+    Write-Host "    removing the pre-StatefulSet kafka Deployment (its emptyDir holds nothing to keep)"
+    kubectl -n $ns delete deployment kafka --wait=true
+    Assert-LastExit "delete legacy kafka Deployment"
+}
+
 foreach ($item in $infra) {
     kubectl apply -f "$root\k8s\$($item.Manifest)"
     Assert-LastExit "kubectl apply $($item.Manifest)"

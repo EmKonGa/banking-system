@@ -81,6 +81,8 @@ if ($AppOnly) {
     # of volumeClaimTemplates); deleting what contains it does not.
     Write-Host "    Postgres data goes with it: the PVC data-postgres-0 is in this namespace."
     Write-Host "    So does Redis: the PVC redis-data, and with it every refresh token and blacklist entry."
+    Write-Host "    And Kafka: the PVC data-kafka-0. The outbox marks rows PUBLISHED once the broker"
+    Write-Host "    acks, so events already delivered are not republished -- they are simply gone."
     Write-Host "    The next deploy regenerates secrets, so JWT_SECRET rotates and old tokens die."
     # Deliberately left standing. It is a cluster add-on in its own namespace, not part of the
     # application, and reinstalling it costs a minute of image pull for no benefit. The Ingress
