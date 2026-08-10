@@ -69,6 +69,13 @@ reconciliation:
   # is still entitled to be working on is never reported as stuck.
   stuck-intent-seconds: ${RECONCILIATION_STUCK_INTENT_SECONDS:1800}
   max-keys: ${RECONCILIATION_MAX_KEYS:200000}
+  # ShedLock. lock-at-most-for is the backstop for a replica that dies mid-sweep — nothing else can
+  # sweep until it expires, so it must exceed the slowest realistic pass while staying well inside
+  # the 1800s staleness alert. lock-at-least-for keeps consecutive sweeps far apart in time, which
+  # is what makes the second sighting of a discrepancy independent evidence rather than an echo of
+  # the first; it is below sweep-interval-ms so a single replica never blocks its own next run.
+  lock-at-most-for: ${RECONCILIATION_LOCK_AT_MOST_FOR:PT10M}
+  lock-at-least-for: ${RECONCILIATION_LOCK_AT_LEAST_FOR:PT4M}
 
 services:
   account-service:

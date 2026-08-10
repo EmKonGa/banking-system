@@ -1,0 +1,41 @@
+# The single external door. Everything below it is ClusterIP and unreachable from outside.
+#
+# Host-based rules are deliberately absent: there is no DNS name for a kind cluster, so a `host:`
+# would make every request need a Host header override to work at all. A catch-all rule keeps
+# http://localhost:8000/api/... working directly, and adding a hostname later is a two-line change.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: banking
+  namespace: banking
+  annotations:
+    # WebSocket connections are long-lived and otherwise idle between notifications. nginx's
+    # default 60s read timeout would close the STOMP connection roughly once a minute, and the
+    # frontend would reconnect silently -- working, but reconnecting forever for no reason.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # Only /api and /ws are published, and that is a decision rather than an omission.
+          # api-gateway has no Spring Security on its classpath, so its /actuator endpoints answer
+          # unauthenticated -- including /actuator/prometheus. In-cluster that is fine and is how
+          # Prometheus scrapes it; exposed through the public door it would publish route names and
+          # traffic volumes to anyone. Probes are kubelet-local and never traverse this Ingress, so
+          # nothing legitimate needs actuator from outside.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080

@@ -50,14 +50,30 @@ $infra = @(
     @{ Manifest = "12-kafka.yaml";     Workload = "deployment/kafka";     Timeout = 900 }
 )
 
+# Pinned, not "latest". An add-on that silently upgrades itself on the next deploy is a change
+# nobody made and nobody can bisect.
+$ingressControllerManifest =
+    "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.13.0/deploy/static/provider/kind/deploy.yaml"
+
 $services = @(
     @{ Name = "auth-service";         Image = "banking/auth-service:dev";
        Manifest = "20-auth-service.yaml";         Timeout = 600; Schema = "banking_auth" },
     @{ Name = "notification-service"; Image = "banking/notification-service:dev";
-       Manifest = "21-notification-service.yaml"; Timeout = 600; Schema = "banking_notification" }
+       Manifest = "21-notification-service.yaml"; Timeout = 600; Schema = "banking_notification" },
+    # Schema = $null means "owns no database", not "schema not decided yet". api-gateway is the
+    # only service here with nothing to migrate, so the migrate Job is skipped for it entirely.
+    @{ Name = "api-gateway";          Image = "banking/api-gateway:dev";
+       Manifest = "22-api-gateway.yaml";          Timeout = 600; Schema = $null },
+    @{ Name = "account-service";      Image = "banking/account-service:dev";
+       Manifest = "23-account-service.yaml";      Timeout = 600; Schema = "banking_account" },
+    @{ Name = "payment-service";      Image = "banking/payment-service:dev";
+       Manifest = "24-payment-service.yaml";      Timeout = 600; Schema = "banking_payment" },
+    @{ Name = "reconciliation-service"; Image = "banking/reconciliation-service:dev";
+       Manifest = "25-reconciliation-service.yaml"; Timeout = 600; Schema = "banking_reconciliation" }
 )
-# Not yet deployed to the cluster: account-service, payment-service, reconciliation-service,
-# api-gateway. Until they exist here, no real transfer or deposit can be exercised in-cluster.
+# The whole stack now runs in the cluster. Order is not significant -- services reach each other by
+# Service DNS and retry, so a caller deployed before its callee simply fails until the callee is
+# ready, which is what readiness gating already handles.
 
 # --- helpers -----------------------------------------------------------------------------------
 
@@ -116,10 +132,39 @@ function Invoke-DbMigration([string]$name, [string]$schema) {
     $cmName = "$name-migrations"
     $jobName = "$name-migrate"
 
-    # `create --dry-run=client -o yaml | apply` is the standard way to get ConfigMap-from-files
-    # UPDATE semantics -- plain `kubectl create configmap` errors if it already exists, and `apply`
-    # alone can't build the key-per-file shape from a directory.
-    kubectl create configmap $cmName -n $ns --from-file="$migrationDir" --dry-run=client -o yaml | kubectl apply -f -
+    # Delete-then-create, NOT the usual `create --dry-run=client -o yaml | kubectl apply -f -`.
+    #
+    # That pipeline corrupts the SQL. Windows PowerShell 5.1 does not pipe bytes between two native
+    # executables -- it decodes kubectl's stdout into a .NET string using [Console]::OutputEncoding
+    # and re-encodes it for the next process. Any byte the console codepage cannot represent
+    # becomes a literal question mark, so every migration comment containing an em-dash reached the
+    # cluster as "???".
+    #
+    # The reason it went unnoticed for a day is the reason it is worth this comment: the damage
+    # depends on the console codepage, so it round-trips cleanly in an interactive UTF-8 terminal
+    # and mangles the file when the same script is driven non-interactively. "Works when I run it"
+    # is not evidence here.
+    #
+    # It then fails in the worst possible way. The file keeps its LENGTH (one 3-byte em-dash
+    # becomes three '?'), so nothing looks truncated, and Flyway only objects later and only
+    # against a schema that already exists -- "Migration checksum mismatch for migration version
+    # 3", pointing at a file that is perfectly correct on disk. Five migrations across four
+    # services contain non-ASCII, so this was waiting for every service still to be deployed.
+    #
+    # kubectl reads --from-file straight from disk and sends the bytes to the API server, so with
+    # no pipeline there is nothing to re-encode. Delete first because plain `create` errors if the
+    # ConfigMap exists, and `apply` alone cannot build the key-per-file shape from a directory.
+    # The gap between delete and create is safe: the Job that mounts it is created further down.
+    #
+    # To CHECK the result, mount the ConfigMap and hash it in-cluster. Do not compare
+    # `kubectl get -o json` output against the file: that output is itself re-encoded on Windows
+    # and shows mojibake for content that is byte-perfect in etcd. Verified 2026-08-07 -- the
+    # mounted file matched the file on disk exactly while the JSON did not.
+    $ErrorActionPreference = "Continue"
+    kubectl -n $ns delete configmap $cmName --ignore-not-found | Out-Null
+    $ErrorActionPreference = "Stop"
+
+    kubectl -n $ns create configmap $cmName --from-file="$migrationDir"
     Assert-LastExit "sync configmap $cmName"
 
     # Jobs are immutable once created (the pod template can't be patched), and the ConfigMap this
@@ -276,6 +321,11 @@ if ($RotateSecrets -or -not $hasSecret) {
         Assert-LastExit "ALTER USER $dbUser"
     }
 
+    # Redis is on a PVC too, but needs no equivalent step: --requirepass is a startup argument read
+    # from the Secret on every boot, not state written into the volume once. The rollout restart
+    # below is the whole of its rotation. Worth stating, because "it has a PVC" is what makes the
+    # Postgres case surprising, and Redis has one now as well.
+
     if ($preExisting.Count -gt 0) {
         Write-Host ""
         Write-Host "    New credentials generated while workloads were already running." -ForegroundColor Yellow
@@ -304,6 +354,33 @@ foreach ($item in $infra) {
         Assert-LastExit "rollout status $($item.Workload)"
     }
 }
+
+# --- 3b. ingress controller --------------------------------------------------------------------
+# Installed from upstream rather than vendored: it is a cluster add-on, not part of this
+# application, and pinning the version here is enough to make the deploy reproducible.
+#
+# The `provider/kind` variant specifically. It differs from the generic one in exactly the ways
+# that matter on a single-node kind cluster: the controller runs as a DaemonSet-like deployment
+# pinned by `nodeSelector: ingress-ready=true` (the label kind-cluster.yaml sets) and uses
+# hostPort 80/443 rather than a LoadBalancer Service -- because nothing here provisions external
+# load balancers, so the generic manifest would sit at <pending> forever.
+#
+# Idempotent: re-applying an unchanged manifest is a no-op, so this runs on every deploy.
+
+Write-Step "Installing the ingress-nginx controller"
+kubectl apply -f $ingressControllerManifest
+Assert-LastExit "kubectl apply ingress-nginx"
+
+# The admission webhook rejects Ingress resources until its certificate Job has run, so applying
+# 30-ingress.yaml before this is ready fails with "no endpoints available for service
+# ingress-nginx-controller-admission" -- a confusing error for a manifest that is perfectly valid.
+Write-Host "    waiting for the controller to be ready..."
+kubectl -n ingress-nginx wait --for=condition=Ready pod `
+    -l app.kubernetes.io/component=controller --timeout=300s
+Assert-LastExit "wait for ingress-nginx controller"
+
+kubectl apply -f "$root\k8s\30-ingress.yaml"
+Assert-LastExit "kubectl apply 30-ingress.yaml"
 
 # --- 4. images ---------------------------------------------------------------------------------
 # There is no registry. Images exist only in the local Docker daemon, and the cluster is a separate
@@ -340,7 +417,11 @@ foreach ($s in $targets) {
     # Whether the Deployment already existed decides if a restart is needed below, so check first.
     $existed = Test-Deployment $s.Name
 
-    Invoke-DbMigration $s.Name $s.Schema
+    if ($null -ne $s.Schema) {
+        Invoke-DbMigration $s.Name $s.Schema
+    } else {
+        Write-Host "    no schema - skipping migration Job"
+    }
 
     kubectl apply -f "$root\k8s\$($s.Manifest)"
     Assert-LastExit "kubectl apply $($s.Manifest)"
@@ -367,7 +448,19 @@ Write-Host ""
 kubectl -n $ns get pvc
 
 Write-Host ""
-Write-Host "Everything is ClusterIP (internal only). To reach a service from Windows:" -ForegroundColor Green
+kubectl -n $ns get ingress
+
+Write-Host ""
+Write-Host "The stack is reachable from Windows at http://localhost:8000" -ForegroundColor Green
+Write-Host "  curl http://localhost:8000/api/auth/register -Method POST ..."
+Write-Host ""
+Write-Host "8000, not 80: Hyper-V reserves low ports on Windows, so kind-cluster.yaml maps the"
+Write-Host "node's 80 to the host's 8000. Inside the cluster nginx still listens on 80."
+Write-Host ""
+Write-Host "Only /api and /ws are published. /actuator is deliberately not -- api-gateway has no"
+Write-Host "Spring Security, so its /actuator/prometheus answers unauthenticated."
+Write-Host ""
+Write-Host "Services are ClusterIP; to reach one directly, bypassing the gateway:" -ForegroundColor Green
 Write-Host "  kubectl -n $ns port-forward svc/auth-service 8081:8081"
 Write-Host "  kubectl -n $ns port-forward svc/notification-service 8084:8084"
 Write-Host ""

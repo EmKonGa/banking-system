@@ -2,6 +2,7 @@ package com.banking.auth.config;
 
 import com.banking.auth.filter.JwtAuthenticationFilter;
 import com.banking.auth.service.CustomUserDetailsService;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,6 +35,12 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Spring Security applies this chain to the ERROR dispatch too. Without this,
+                        // an unhandled exception forwards to /error, .anyRequest().authenticated()
+                        // denies it, and the caller sees an empty 403 — a database outage becomes
+                        // indistinguishable from an authorization failure. Permitting the dispatch
+                        // type rather than the /error path keeps /error unreachable from outside.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/**", "/actuator/health/**", "/actuator/prometheus",
                                 "/actuator/circuitbreakers", "/actuator/circuitbreakerevents",
                                 "/actuator/retries", "/actuator/retryevents").permitAll()

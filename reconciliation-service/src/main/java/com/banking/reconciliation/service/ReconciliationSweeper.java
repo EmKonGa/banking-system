@@ -10,6 +10,7 @@ import com.banking.reconciliation.entity.FindingType;
 import com.banking.reconciliation.service.FindingRecorder.Observation;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -73,10 +74,26 @@ public class ReconciliationSweeper {
      * cannot fetch a snapshot — it would abort, which is harmless, but on a rolling restart it also
      * means the first useful sweep waits a full interval. Starting a minute in costs nothing and
      * makes the first pass a real one.
+     *
+     * <p>{@code @SchedulerLock} makes this a singleton across replicas; {@code V3__shedlock.sql}
+     * records why overlapping sweeps blind the register rather than merely duplicating work.
+     *
+     * <p><strong>{@code lockAtLeastFor} is not padding here — it protects the two-sightings rule.</strong>
+     * A discrepancy is only believed once it has survived a second <em>independent</em> sweep, and
+     * "independent" means separated in time: that is what lets money in flight during one pass be
+     * settled by the next. With only {@code lockAtMostFor}, a replica whose schedule fires just
+     * after the holder released could sweep seconds later, and two sightings seconds apart confirm
+     * exactly the in-flight artefacts the debounce exists to discard. Holding the lock for most of
+     * the interval keeps consecutive sweeps genuinely far apart. It stays below the interval so a
+     * lone replica is never blocked by its own previous run.
      */
     @Scheduled(
             fixedDelayString = "${reconciliation.sweep-interval-ms:300000}",
             initialDelayString = "${reconciliation.initial-delay-ms:60000}")
+    @SchedulerLock(
+            name = "reconciliationSweep",
+            lockAtMostFor = "${reconciliation.lock-at-most-for:PT10M}",
+            lockAtLeastFor = "${reconciliation.lock-at-least-for:PT4M}")
     public void sweep() {
         try {
             List<Observation> observations = new ArrayList<>();

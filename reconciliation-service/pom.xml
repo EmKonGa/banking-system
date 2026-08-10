@@ -51,6 +51,20 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
+        <!--
+          ShedLock keeps the sweep a singleton across replicas. The JDBC provider is chosen over the
+          Redis one so the lock lives in the same database as the findings it protects: a Redis
+          outage would otherwise let two sweeps run against a register that is perfectly available.
+        -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: banking
+spec:
+  # Two on purpose. The gateway is the one component every request passes through, so at one
+  # replica it is the single point of failure for the whole system -- and step 3 measured what that
+  # costs: ~30s with zero endpoints while a replacement pod boots and passes readiness. It is also
+  # the only stateless-by-construction service here; it holds no session, and its one piece of
+  # per-request state (the token blacklist) lives in Redis.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: banking/api-gateway:dev
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 8080
+
+          envFrom:
+            - configMapRef:
+                name: banking-config
+            - secretRef:
+                name: banking-secrets
+
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75"
+            - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+              value: "true"
+            # No SPRING_FLYWAY_ENABLED here, and no migrate Job in deploy.ps1 either: the gateway
+            # owns no schema. It is the only deployed service with no database at all.
+
+          # Unlike the five downstream services, this one has no SecurityConfig -- api-gateway does
+          # not depend on spring-boot-starter-security, so there is no filter chain that could
+          # reject a probe. That was worth checking rather than assuming: the equivalent question
+          # cost a day on the downstream services, where /actuator/health was permitted as an exact
+          # path and the probes' /liveness and /readiness sub-paths came back 403.
+          #
+          # It cuts the other way too, which is why the Ingress publishes only /api and /ws:
+          # /actuator/prometheus is unauthenticated here, and the gateway is the public door.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              # Lighter than the JPA services: Netty and a routing table, no Hibernate, no
+              # connection pool. Two replicas at 384Mi still cost less than one auth-service.
+              memory: 384Mi
+              cpu: 150m
+            limits:
+              memory: 384Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: banking
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+# ClusterIP, not NodePort or LoadBalancer. The Ingress is what publishes this, and routing through
+# it rather than a per-service node port is the entire point of step 6: one external address, one
+# place to attach TLS and rate limiting later, and no host-port collisions to manage by hand.

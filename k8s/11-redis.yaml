@@ -1,3 +1,29 @@
+# Redis holds three things, and they are not equally disposable. The account cache fails open to
+# Postgres, so losing it costs latency and nothing else. Refresh tokens dying logs everyone out —
+# annoying, not dangerous. But `blacklist:<jti>` is what makes logout mean anything: lose those and
+# an access token its owner deliberately revoked becomes valid again for the remainder of its 5
+# minute TTL. That is a security property evaporating on a pod restart, so this gets a volume.
+#
+# --- Why a Deployment with a PVC and not a StatefulSet, unlike Postgres -------------------------
+# A StatefulSet buys stable identity and ordered rollout, which matter when replicas differ from
+# each other. This is one replica and always will be — the relay is pub/sub, not a cluster. What
+# actually has to be guaranteed is that two Redis processes never open the same appendonly file,
+# and `strategy: Recreate` is what guarantees it: the old pod is fully terminated before the
+# replacement is created. The default RollingUpdate would start the new pod first, which is the
+# same two-writers hazard the Postgres conversion had to avoid — sharing a volume is what creates
+# it, so it did not exist on this manifest until now.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: banking
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,6 +31,9 @@ metadata:
   namespace: banking
 spec:
   replicas: 1
+  strategy:
+    # Mandatory, not stylistic — see the note at the top of this file.
+    type: Recreate
   selector:
     matchLabels:
       app: redis
@@ -21,7 +50,11 @@ spec:
           # passes through as a literal and Redis ends up with the string "${REDIS_PASSWORD}" as
           # its password.
           command: ["redis-server"]
-          args: ["--requirepass", "$(REDIS_PASSWORD)"]
+          # appendonly, not the default RDB snapshots. redis:7-alpine ships save points of 1 hour /
+          # 5 min / 1 min depending on write volume, so on a quiet system a blacklist entry written
+          # just before a restart is simply gone — the volume would be there and the guarantee
+          # still would not. AOF fsyncs every second, which bounds the loss to about a second.
+          args: ["--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes"]
           env:
             - name: REDIS_PASSWORD
               valueFrom:
@@ -30,6 +63,9 @@ spec:
                   key: REDIS_PASSWORD
           ports:
             - containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
           readinessProbe:
             exec:
               command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
@@ -40,7 +76,14 @@ spec:
               memory: 32Mi
               cpu: 25m
             limits:
-              memory: 64Mi
+              # Raised from 64Mi: the AOF rewrite that keeps the file from growing without bound
+              # forks a child, and a fork under a tight cgroup limit is where Redis gets OOM-killed
+              # while looking perfectly healthy right up to the moment it does.
+              memory: 128Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
 
 ---
 apiVersion: v1

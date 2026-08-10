@@ -80,7 +80,13 @@ if ($AppOnly) {
     # directory backing it. Deleting the STATEFULSET alone would keep the claim (that is the point
     # of volumeClaimTemplates); deleting what contains it does not.
     Write-Host "    Postgres data goes with it: the PVC data-postgres-0 is in this namespace."
+    Write-Host "    So does Redis: the PVC redis-data, and with it every refresh token and blacklist entry."
     Write-Host "    The next deploy regenerates secrets, so JWT_SECRET rotates and old tokens die."
+    # Deliberately left standing. It is a cluster add-on in its own namespace, not part of the
+    # application, and reinstalling it costs a minute of image pull for no benefit. The Ingress
+    # object itself lives in the banking namespace and does go.
+    Write-Host "    The ingress-nginx controller stays (own namespace); localhost:8000 goes dark"
+    Write-Host "    only until the next deploy re-creates the Ingress."
 
     Confirm-Or-Exit "Delete namespace '$ns'?"
 
