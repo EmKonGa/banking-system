@@ -1,14 +1,34 @@
 # Kafka in KRaft mode -- one node acting as both broker and controller.
 #
-# Like postgres, this is deliberately a Deployment on emptyDir rather than a StatefulSet with a
-# PVC. A broker's identity and its log directory are the same thing, so this is the wrong shape for
-# the same reasons; it is left standing until the StatefulSet step makes the difference concrete.
+# ⚠️ The important line in this file is KAFKA_LOG_DIRS, and it is worth explaining before anything
+# else, because its absence is what made the previous version of this manifest a lie.
+#
+# That version mounted a volume at /var/lib/kafka/data and never told Kafka to use it. The
+# apache/kafka image generates its server.properties from KAFKA_* environment variables, and with
+# no KAFKA_LOG_DIRS among them it fell back to the packaged default -- so the broker wrote to
+# /tmp/kafka-logs while the mount sat empty. Verified on the live cluster before this rewrite:
+# meta.properties and payment.events-0 were both under /tmp, and `ls /var/lib/kafka/data` returned
+# nothing at all.
+#
+# So the emptyDir was catching nothing, which was harmless only because emptyDir is not durable
+# either. The trap is what comes next: swapping `emptyDir: {}` for a PersistentVolumeClaim and
+# stopping there produces a manifest that *looks* fixed, passes review, mounts a real volume, and
+# still loses every event on a pod delete -- because the broker is still writing to /tmp. A volume
+# that is mounted but unused is indistinguishable from a volume that is working, right up until the
+# restart it was supposed to survive.
+#
+# What is actually at stake here is not "some messages": OutboxPoller marks its rows PUBLISHED once
+# the broker acks, so those rows are never republished. A wiped Kafka log destroys events that
+# payment-service believes it has delivered, with nothing left anywhere to retry from. The outbox
+# is the durable retry layer, and it has already let go by then.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: kafka
   namespace: banking
 spec:
+  # Points at the HEADLESS Service below, not the ClusterIP one -- same split as postgres.
+  serviceName: kafka-hl
   replicas: 1
   selector:
     matchLabels:
@@ -18,12 +38,30 @@ spec:
       labels:
         app: kafka
     spec:
+      # Kafka's SIGTERM is already a controlled shutdown: it stops accepting requests, flushes, and
+      # closes its log segments. So unlike postgres this needs no preStop hook -- and the contrast
+      # is the point. Postgres treats SIGTERM as a *smart* shutdown that waits for every client to
+      # disconnect, which HikariCP never does, so it needed an explicit `pg_ctl -m fast`. Same
+      # signal, opposite default. 60s is headroom for the flush, not a deadline anything here needs.
+      terminationGracePeriodSeconds: 60
       containers:
         - name: kafka
           image: apache/kafka:3.7.0
           ports:
             - containerPort: 9092
           env:
+            # ⚠️ The line the previous manifest was missing. Without it the mount below is
+            # decorative and the broker writes to /tmp/kafka-logs.
+            #
+            # A SUBDIRECTORY of the mount, not the mount root, for the same reason PGDATA is: a
+            # volume root is not reliably empty -- many provisioners leave a lost+found in it -- and
+            # Kafka's storage formatter decides whether this node has been initialised by what it
+            # finds in this directory. kind's local-path happens to leave the root clean, so this is
+            # insurance against the manifest moving to a real cluster: exactly the class of
+            # difference that otherwise only surfaces somewhere expensive.
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data/kraft
+
             - name: KAFKA_NODE_ID
               value: "1"
             - name: KAFKA_PROCESS_ROLES
@@ -40,6 +78,11 @@ spec:
             # clients inside the cluster resolve. Advertising localhost would have every consumer
             # dial itself. The compose file also carries an EXTERNAL listener on 9094 for host
             # tooling; there is no host access here, so it is dropped.
+            #
+            # Advertising the ClusterIP Service is correct only while there is one broker. A second
+            # replica would need each pod to advertise its own headless address
+            # (kafka-0.kafka-hl...), or clients would be handed a virtual IP that load-balances
+            # across brokers -- and a partition leader is a specific broker, not any of them.
             - name: KAFKA_LISTENERS
               value: PLAINTEXT://:9092,CONTROLLER://:9093
             - name: KAFKA_ADVERTISED_LISTENERS
@@ -67,6 +110,17 @@ spec:
             # second notification-service replica sits idle rather than sharing the load.
             - name: KAFKA_HEAP_OPTS
               value: -Xmx512M -Xms512M
+
+            # ⚠️ This value just became load-bearing, and in a way that mirrors the Postgres
+            # -RotateSecrets trap exactly.
+            #
+            # On an emptyDir the log directory was empty on every boot, so the node was formatted
+            # fresh each time and this ID only had to be *a* valid one. On a PVC it is written into
+            # meta.properties once, on first format, and every later boot compares this variable
+            # against what is stored. Change it and the broker refuses to start with
+            # InconsistentClusterIdException -- the durability is what makes the value permanent.
+            # Same shape as POSTGRES_PASSWORD becoming a one-shot initdb input the moment the data
+            # directory stopped being thrown away.
             - name: CLUSTER_ID
               value: MkU3OEVBNTcwNTJENDM2Qk
           volumeMounts:
@@ -88,11 +142,43 @@ spec:
               cpu: 200m
             limits:
               memory: 1Gi
-      volumes:
-        - name: data
-          emptyDir: {}
+
+  # A StatefulSet rather than a Deployment with a PVC, which is the shape Redis got. Both would work
+  # at one replica, so the reason is about which direction each can grow.
+  #
+  # A broker's identity and its log directory are the same object: meta.properties holds the node id
+  # and the cluster id, and the partition data on disk is only meaningful to the broker that owns
+  # that id. Growing to two brokers means two identities and two volumes, which is precisely what
+  # ordinals and volumeClaimTemplates provide. Redis grows the other way -- a second Redis is a
+  # different topology (Sentinel or Cluster), not a second identical pod -- so a StatefulSet would
+  # have bought it nothing.
+  #
+  # The immediate safety property matters either way, and it did not exist before this commit: a
+  # Deployment's rolling update may start the replacement before the original is gone, and two
+  # brokers opening one log directory is corruption. Sharing a durable volume is what creates that
+  # hazard, so it arrives with the PVC rather than being fixed by it.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # No storageClassName: use the cluster default. In kind that is `standard`, backed by the
+        # rancher local-path provisioner, writing to a directory on the NODE container's filesystem.
+        # Survives pod deletes and host reboots; does NOT survive `kind delete cluster`.
+        #
+        # 2Gi against a single low-volume topic at the default 7-day retention. Postgres took 5Gi
+        # because it holds the ledger; this holds a replayable-in-principle event stream.
+        resources:
+          requests:
+            storage: 2Gi
 
 ---
+# Unchanged, and deliberately so: every producer and consumer reaches Kafka through this name via
+# KAFKA_BOOTSTRAP_SERVERS, so converting the workload underneath moves nothing in any service's
+# config. It also preserves the failure mode the apps already expect -- a stable virtual IP that
+# refuses connections while the broker is down, rather than a name that stops resolving. Pointing
+# them at the headless Service instead would turn "Kafka restarting" into UnknownHostException,
+# which reads like a DNS fault rather than a dependency being down.
 apiVersion: v1
 kind: Service
 metadata:
@@ -100,6 +186,27 @@ metadata:
   namespace: banking
 spec:
   type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - port: 9092
+      targetPort: 9092
+
+---
+# For the StatefulSet, not for clients: `clusterIP: None` makes it headless, and a headless
+# governing Service is what the controller requires before it will hand out per-pod DNS. Nothing
+# dials kafka-0.kafka-hl today -- with one broker there is nothing to distinguish -- but it is the
+# mechanism a second broker would need, and it is what KAFKA_ADVERTISED_LISTENERS would have to
+# point at then.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-hl
+  namespace: banking
+  labels:
+    app: kafka
+spec:
+  clusterIP: None
   selector:
     app: kafka
   ports:

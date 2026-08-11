@@ -47,7 +47,7 @@ $infra = @(
     # where nothing is actually wrong.
     @{ Manifest = "10-postgres.yaml";  Workload = "statefulset/postgres"; Timeout = 600 },
     @{ Manifest = "11-redis.yaml";     Workload = "deployment/redis";     Timeout = 600 },
-    @{ Manifest = "12-kafka.yaml";     Workload = "deployment/kafka";     Timeout = 900 }
+    @{ Manifest = "12-kafka.yaml";     Workload = "statefulset/kafka";    Timeout = 900 }
 )
 
 # Pinned, not "latest". An add-on that silently upgrades itself on the next deploy is a change
@@ -189,7 +189,21 @@ spec:
       restartPolicy: Never
       containers:
         - name: flyway
-          image: flyway/flyway:10-alpine
+          # NOT the -alpine variant, and this is the one image in the stack where that is a
+          # decision rather than a default. Every -alpine tag in the Flyway 10 line is published
+          # linux/amd64 ONLY -- verified with `docker manifest inspect`: 10-alpine and
+          # 10.22-alpine list amd64 alone, while plain `10` carries amd64, arm and arm64. The
+          # target host for the public deployment is Oracle A1, which is aarch64, so 10-alpine
+          # would have failed there with an exec-format error at the one step every service
+          # depends on -- and only after the cluster was already provisioned.
+          #
+          # `11-alpine` is also multi-arch and would keep the smaller image, but it is a major
+          # bump on the tool that owns flyway_schema_history, and these databases already hold
+          # v10 history rows. Staying on 10 keeps the checksum algorithm identical; a mismatch
+          # there reads as "Migration checksum mismatch" against a file that is perfectly correct
+          # on disk, which has already cost a session here once for an unrelated reason. Revisit
+          # 11-alpine if the larger pull becomes a problem.
+          image: flyway/flyway:10
           args: ["-connectRetries=10", "migrate"]
           env:
             - name: FLYWAY_URL
@@ -342,6 +356,25 @@ if ($RotateSecrets -or -not $hasSecret) {
 # --- 3. config + infrastructure ----------------------------------------------------------------
 
 Write-Step "Applying config and infrastructure"
+
+# Kafka was a Deployment until it moved to a StatefulSet on a PVC. Both select `app: kafka`, so a
+# leftover Deployment does not conflict with the StatefulSet -- it quietly coexists, and the
+# ClusterIP Service round-robins between a broker holding the data and one holding none. Consumers
+# would then see a topic that has messages on some connections and not others.
+#
+# `kubectl apply` cannot clean this up: the old object is a different kind under a different name in
+# the API, so nothing about applying the new manifest implies deleting it. Explicit, and idempotent
+# after the first run.
+# Probed with Test-Deployment rather than `kubectl get deployment kafka 2>$null`: PS 5.1 wraps a
+# native command's stderr in a NativeCommandError and throws under $ErrorActionPreference = "Stop",
+# so probing for an ABSENT resource by name is exactly the thing that fails. Test-K8sResource lists
+# and matches instead. This script has been bitten by that twice already.
+if (Test-Deployment "kafka") {
+    Write-Host "    removing the pre-StatefulSet kafka Deployment (its emptyDir holds nothing to keep)"
+    kubectl -n $ns delete deployment kafka --wait=true
+    Assert-LastExit "delete legacy kafka Deployment"
+}
+
 foreach ($item in $infra) {
     kubectl apply -f "$root\k8s\$($item.Manifest)"
     Assert-LastExit "kubectl apply $($item.Manifest)"
