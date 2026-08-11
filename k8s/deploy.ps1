@@ -529,7 +529,19 @@ foreach ($s in $targets) {
         Assert-LastExit "rollout restart $($s.Name)"
     }
 
-    kubectl -n $ns rollout status "deployment/$($s.Name)" --timeout="$($s.Timeout)s"
+    # A pulled rollout gets a longer budget than a locally-loaded one, and the reason is not the
+    # download. Measured here on the first -Pull run: kubelet fetched the api-gateway image in 36s,
+    # then the JVM logged "Started GatewayApplication in 1278.664 seconds (process running for
+    # 54.628)" -- 21 minutes of wall clock for 55 seconds of work. The node was simply saturated.
+    #
+    # -Pull replaces every service at once on a single-node cluster, and a rolling update keeps the
+    # outgoing pod running until the new one is Ready, so for the length of the deploy the node
+    # carries close to double the pods AND six cold image pulls. The 600s budget was sized for the
+    # build path, where the image is already in containerd and the pods roll one service at a time
+    # against a warm node. Under -Pull it expires while every pod is still perfectly healthy and
+    # merely slow -- which is the failure mode these timeouts exist to avoid, not to cause.
+    $rolloutTimeout = if ($Pull) { [Math]::Max($s.Timeout, 900) } else { $s.Timeout }
+    kubectl -n $ns rollout status "deployment/$($s.Name)" --timeout="${rolloutTimeout}s"
     Assert-LastExit "rollout status $($s.Name)"
 }
 
