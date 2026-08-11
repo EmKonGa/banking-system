@@ -20,7 +20,8 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: banking/api-gateway:dev
+          # See 20-auth-service.yaml for why `:dev` is a tag CI never publishes.
+          image: ghcr.io/emkonga/banking-system/api-gateway:dev
           imagePullPolicy: IfNotPresent
 
           ports:

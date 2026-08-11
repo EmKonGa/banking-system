@@ -15,11 +15,19 @@ spec:
     spec:
       containers:
         - name: auth-service
-          image: banking/auth-service:dev
-          # Nothing has pushed this image to a registry -- it was built locally and side-loaded
-          # with `kind load docker-image`. The default policy for a :latest-style tag is Always,
-          # which would send kubelet to Docker Hub looking for "banking/auth-service" and fail
-          # with ErrImagePull. IfNotPresent tells it to use what the node already has.
+          image: ghcr.io/emkonga/banking-system/auth-service:dev
+          # The name is a real registry path, but `:dev` is a tag CI deliberately NEVER publishes
+          # -- it belongs to whatever deploy.ps1 last built on this machine and side-loaded with
+          # `kind load docker-image`. CI publishes `main` and `sha-<short>`; deploying either is an
+          # explicit `deploy.ps1 -Pull`, which rewrites this line via `kubectl set image`.
+          #
+          # Keeping the local tag unpublishable is the point. If it also existed in the registry,
+          # a missing local build would silently fall back to whatever the registry held -- so a
+          # deploy would appear to succeed while running code nobody on this machine had built.
+          # As it is, a missing local image fails loudly with ErrImagePull.
+          #
+          # IfNotPresent, because the default policy for a :latest-style tag is Always, which sends
+          # kubelet to the registry for an image that is already on the node.
           imagePullPolicy: IfNotPresent
 
           ports:

@@ -38,7 +38,8 @@ spec:
     spec:
       containers:
         - name: notification-service
-          image: banking/notification-service:dev
+          # See 20-auth-service.yaml for why `:dev` is a tag CI never publishes.
+          image: ghcr.io/emkonga/banking-system/notification-service:dev
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8084

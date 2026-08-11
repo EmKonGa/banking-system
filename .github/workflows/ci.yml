@@ -14,6 +14,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Spelled out in lowercase rather than derived from ${{ github.repository }}, which is
+  # "EmKonGa/banking-system" — a Docker reference must be lowercase, so interpolating it produces
+  # `invalid reference format` at push time, after the whole build has already run.
+  IMAGE_PREFIX: ghcr.io/emkonga/banking-system
+
 jobs:
   test:
     name: Build & test
@@ -50,10 +56,13 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # On a pull request, prove each image still assembles. One architecture, nothing pushed: a PR
+  # needs fast feedback on "did I break the build", not artefacts nobody will deploy.
   docker:
     name: Docker build (${{ matrix.service }})
     runs-on: ubuntu-latest
     needs: test
+    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -69,12 +78,10 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Build only — nothing is pushed. This proves each image still assembles; publishing waits
-      # until there is somewhere to deploy to.
-      #
       # Each Dockerfile is a multi-stage build that runs Maven inside the image, so without a cache
       # every service re-resolves the whole dependency tree. The GHA cache is scoped per service so
-      # they don't evict each other.
+      # they don't evict each other — and the scope carries the architecture, because publish below
+      # writes to the same cache backend and a cross-arch hit would be a miss that costs a restore.
       - name: Build ${{ matrix.service }}
         uses: docker/build-push-action@v6
         with:
@@ -82,5 +89,160 @@ jobs:
           file: ${{ matrix.service }}/Dockerfile
           push: false
           tags: banking/${{ matrix.service }}:ci
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          cache-from: type=gha,scope=${{ matrix.service }}-amd64
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-amd64
+
+  # On main, publish. Two architectures because the deployment target is Oracle A1 (aarch64) while
+  # every local cluster here is amd64 — and an image that exists for only one of them fails at the
+  # host, with an exec-format error that reads like a broken cluster rather than a missing variant.
+  # Same class of latent failure as the Flyway -alpine tag, caught the same way: fix it here, where
+  # it is cheap.
+  #
+  # Built NATIVELY on a runner per architecture rather than with QEMU. These Dockerfiles run a full
+  # Maven build inside the image; emulating that for arm64 turns a few minutes into tens of them,
+  # per service. arm64 hosted runners are free for public repositories, which this is.
+  publish:
+    name: Publish ${{ matrix.service }} (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    needs: test
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - account-service
+          - payment-service
+          - notification-service
+          - reconciliation-service
+        platform:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The workflow's own token. No PAT to create, rotate, or leak — `packages: write` above
+          # is the entire grant, and it dies with the job.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Labels only. The tags are applied by the merge job below, because what is pushed here is
+      # one architecture's image and no human-readable tag should ever point at just one of them.
+      # org.opencontainers.image.source is what links the package to this repository in the GitHub
+      # UI — without it the package appears orphaned and cannot inherit the repo's visibility.
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+
+      # push-by-digest publishes the layers and the manifest but attaches NO tag, returning the
+      # digest instead. That is what makes a multi-arch tag assemblable from separate machines:
+      # each arch pushes anonymously, and one tag is created at the end pointing at all of them.
+      # Tagging here instead would have the two jobs race, each overwriting the other's tag with a
+      # single-architecture image — and the loser's arch would vanish from the tag entirely.
+      - name: Build and push ${{ matrix.service }} (${{ matrix.platform.arch }})
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.service }}/Dockerfile
+          platforms: linux/${{ matrix.platform.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.platform.arch }}
+
+      # The digest is the only thing the merge job needs, and jobs cannot return values to each
+      # other except through artifacts. An empty file named for the digest is the whole payload.
+      - name: Export the digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.service }}-${{ matrix.platform.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One manifest list per service, pointing at both architectures. This is the only step that
+  # creates a tag anyone deploys.
+  manifest:
+    name: Manifest ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - account-service
+          - payment-service
+          - notification-service
+          - reconciliation-service
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-${{ matrix.service }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Two tags, and the pair is deliberate. The branch tag moves (`main` on main), which is what a
+      # local kind deploy wants -- "whatever is current". `sha-<short>` is immutable, which is what
+      # a real host wants: a deployment pinned to a moving tag cannot be rolled back to a known
+      # image, because the name of the thing that was working no longer resolves to it.
+      #
+      # Derived from the ref rather than hardcoded to `main`, so a workflow_dispatch on a branch
+      # publishes under that branch's name. Hardcoding it would let any branch overwrite the tag
+      # main is deployed from -- which is exactly what running this pipeline before merging it
+      # would have done.
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+
+      # imagetools create takes the per-arch digests pushed above and writes ONE manifest list
+      # under each tag. Nothing is rebuilt or re-uploaded here; it is an index over blobs the
+      # registry already holds, which is why this job takes seconds.
+      - name: Create the manifest list
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/${{ matrix.service }}@sha256:%s ' *)
+
+      # steps.meta.outputs.version is the primary tag this run actually produced -- `main` on main,
+      # the branch name on a dispatch. Naming a tag literally here would fail on every run that is
+      # not main, which is precisely the runs that exist to prove this pipeline before it merges.
+      - name: Show what was published
+        run: docker buildx imagetools inspect ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ steps.meta.outputs.version }}
