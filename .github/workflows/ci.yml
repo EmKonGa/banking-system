@@ -241,5 +241,8 @@ jobs:
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.IMAGE_PREFIX }}/${{ matrix.service }}@sha256:%s ' *)
 
+      # steps.meta.outputs.version is the primary tag this run actually produced -- `main` on main,
+      # the branch name on a dispatch. Naming a tag literally here would fail on every run that is
+      # not main, which is precisely the runs that exist to prove this pipeline before it merges.
       - name: Show what was published
-        run: docker buildx imagetools inspect ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
+        run: docker buildx imagetools inspect ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ steps.meta.outputs.version }}
