@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: account-service
-          image: banking/account-service:dev
+          # See 20-auth-service.yaml for why `:dev` is a tag CI never publishes.
+          image: ghcr.io/emkonga/banking-system/account-service:dev
           imagePullPolicy: IfNotPresent
 
           ports:

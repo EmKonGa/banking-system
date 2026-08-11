@@ -4,6 +4,8 @@
 #     ./k8s/deploy.ps1 -SkipBuild      # redeploy manifests only (fast; no image rebuild)
 #     ./k8s/deploy.ps1 -Only auth-service
 #     ./k8s/deploy.ps1 -Recreate       # delete the cluster first and start clean
+#     ./k8s/deploy.ps1 -Pull           # deploy CI's published images instead of building locally
+#     ./k8s/deploy.ps1 -Pull -ImageTag sha-1a2b3c4
 #
 # Safe to re-run. Every step checks for what it is about to create, so a second run converges on
 # the same state rather than erroring -- which matters because the usual reason to run this is
@@ -25,13 +27,39 @@ param(
     [switch]$RotateSecrets,
 
     # Restrict the build/deploy to one service (infrastructure is still ensured).
-    [string]$Only
+    [string]$Only,
+
+    # Run the images CI published to GHCR rather than building anything locally. This is the path a
+    # real host uses -- it has no local Docker daemon holding the images and no `kind load` to
+    # side-load them with -- so exercising it here is how that path gets tested before the host
+    # exists. Implies -SkipBuild.
+    [switch]$Pull,
+
+    # Which published tag -Pull deploys. Defaults to `main`, which moves.
+    #
+    # Prefer an immutable `sha-<short>` tag for anything long-lived. Two reasons, and the second is
+    # the one that bites: a deployment pinned to a moving tag cannot be rolled back, because the
+    # name of the image that was working no longer resolves to it; and because the manifests set
+    # imagePullPolicy: IfNotPresent, a node that already holds SOME image called `:main` will keep
+    # running it, so re-pushing the tag changes nothing until the node forgets. A sha tag has
+    # neither problem -- a new tag is always absent, so it is always pulled.
+    [string]$ImageTag = "main"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $ns = "banking"
 $clusterName = "banking"
+
+# Where CI publishes. Lowercase because a Docker reference must be, while the GitHub owner is
+# "EmKonGa" -- the same trap the workflow avoids by not interpolating ${{ github.repository }}.
+$registry = "ghcr.io/emkonga/banking-system"
+
+# The tag built locally is deliberately one CI never publishes. If `:dev` also existed in the
+# registry, a service whose local build had failed or been pruned would quietly fall back to the
+# registry copy, and the deploy would look successful while running code that was never built here.
+# With an unpublished tag the same situation is an immediate, obvious ErrImagePull.
+$localTag = "dev"
 
 # --- the stack, in dependency order ------------------------------------------------------------
 # Adding a service later is one row here plus its manifest; nothing else in this script changes.
@@ -55,21 +83,17 @@ $infra = @(
 $ingressControllerManifest =
     "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.13.0/deploy/static/provider/kind/deploy.yaml"
 
+# Image is not a column here: it is derived from Name, the registry and the tag being deployed, so
+# that the local build and the published artifact cannot drift apart by editing one of two lists.
 $services = @(
-    @{ Name = "auth-service";         Image = "banking/auth-service:dev";
-       Manifest = "20-auth-service.yaml";         Timeout = 600; Schema = "banking_auth" },
-    @{ Name = "notification-service"; Image = "banking/notification-service:dev";
-       Manifest = "21-notification-service.yaml"; Timeout = 600; Schema = "banking_notification" },
+    @{ Name = "auth-service";           Manifest = "20-auth-service.yaml";           Timeout = 600; Schema = "banking_auth" },
+    @{ Name = "notification-service";   Manifest = "21-notification-service.yaml";   Timeout = 600; Schema = "banking_notification" },
     # Schema = $null means "owns no database", not "schema not decided yet". api-gateway is the
     # only service here with nothing to migrate, so the migrate Job is skipped for it entirely.
-    @{ Name = "api-gateway";          Image = "banking/api-gateway:dev";
-       Manifest = "22-api-gateway.yaml";          Timeout = 600; Schema = $null },
-    @{ Name = "account-service";      Image = "banking/account-service:dev";
-       Manifest = "23-account-service.yaml";      Timeout = 600; Schema = "banking_account" },
-    @{ Name = "payment-service";      Image = "banking/payment-service:dev";
-       Manifest = "24-payment-service.yaml";      Timeout = 600; Schema = "banking_payment" },
-    @{ Name = "reconciliation-service"; Image = "banking/reconciliation-service:dev";
-       Manifest = "25-reconciliation-service.yaml"; Timeout = 600; Schema = "banking_reconciliation" }
+    @{ Name = "api-gateway";            Manifest = "22-api-gateway.yaml";            Timeout = 600; Schema = $null },
+    @{ Name = "account-service";        Manifest = "23-account-service.yaml";        Timeout = 600; Schema = "banking_account" },
+    @{ Name = "payment-service";        Manifest = "24-payment-service.yaml";        Timeout = 600; Schema = "banking_payment" },
+    @{ Name = "reconciliation-service"; Manifest = "25-reconciliation-service.yaml"; Timeout = 600; Schema = "banking_reconciliation" }
 )
 # The whole stack now runs in the cluster. Order is not significant -- services reach each other by
 # Service DNS and retry, so a caller deployed before its callee simply fails until the callee is
@@ -111,6 +135,10 @@ function Test-K8sResource([string]$kind, [string]$name) {
 }
 
 function Test-Deployment([string]$name) { return (Test-K8sResource "deployments" $name) }
+
+# The full reference for a service's image. One function, so "what did we build" and "what does the
+# cluster run" are the same string by construction rather than by two lists agreeing.
+function Get-ImageRef([string]$name, [string]$tag) { return "$registry/${name}:$tag" }
 
 # Takes a "kind/name" reference, as used in the $infra table above.
 function Test-Workload([string]$ref) {
@@ -416,9 +444,17 @@ kubectl apply -f "$root\k8s\30-ingress.yaml"
 Assert-LastExit "kubectl apply 30-ingress.yaml"
 
 # --- 4. images ---------------------------------------------------------------------------------
-# There is no registry. Images exist only in the local Docker daemon, and the cluster is a separate
-# container that cannot see it -- hence `kind load`, and imagePullPolicy: IfNotPresent in the
-# manifests so kubelet does not go looking on Docker Hub and fail with ErrImagePull.
+# Two ways an image reaches the node, and they are the local and the remote story respectively.
+#
+# By default it is built here and side-loaded with `kind load docker-image`, because the cluster is
+# a separate container with its own containerd -- it cannot see the host's Docker daemon, and
+# nothing has pushed this build anywhere. imagePullPolicy: IfNotPresent in the manifests is what
+# stops kubelet going to the registry for it.
+#
+# With -Pull the images come from GHCR, published by CI as multi-arch manifest lists. That is the
+# only mechanism available on a real host: `kind load` has no equivalent there, and building on the
+# host itself means installing a toolchain and burning its RAM on six Maven builds. Running it here
+# is how the remote path gets tested while the failures are still cheap to fix.
 
 $targets = $services
 if ($Only) {
@@ -426,19 +462,30 @@ if ($Only) {
     if ($targets.Count -eq 0) { throw "Unknown service '$Only'. Known: $($services.Name -join ', ')" }
 }
 
-if ($SkipBuild) {
+# -Pull is not "build, then also pull" -- it is the other source for the same images.
+$buildImages = -not ($SkipBuild -or $Pull)
+$deployTag = if ($Pull) { $ImageTag } else { $localTag }
+
+if ($Pull) {
+    Write-Step "Deploying published images: $registry/<service>:$deployTag"
+    Write-Host "    nothing is built locally; kubelet pulls from GHCR"
+} elseif ($SkipBuild) {
     Write-Step "Skipping image build (-SkipBuild)"
+    # Worth saying out loud, because it has cost a session: -SkipBuild skips `kind load` too, so an
+    # image built by hand outside this script is still absent from the node and the rollout will
+    # time out in ImagePullBackOff.
 } else {
     foreach ($s in $targets) {
         Write-Step "Building $($s.Name)"
+        $image = Get-ImageRef $s.Name $localTag
         # Build context is the repo root, not the service directory: the Dockerfiles need the
         # parent POM and the shared banking-common / banking-events modules.
-        docker build -t $s.Image -f "$root\$($s.Name)\Dockerfile" $root
+        docker build -t $image -f "$root\$($s.Name)\Dockerfile" $root
         Assert-LastExit "docker build $($s.Name)"
 
         Write-Host "    loading into cluster..."
-        & $kind load docker-image $s.Image --name $clusterName
-        Assert-LastExit "kind load $($s.Image)"
+        & $kind load docker-image $image --name $clusterName
+        Assert-LastExit "kind load $image"
     }
 }
 
@@ -459,10 +506,25 @@ foreach ($s in $targets) {
     kubectl apply -f "$root\k8s\$($s.Manifest)"
     Assert-LastExit "kubectl apply $($s.Manifest)"
 
+    # The manifest names the local :dev tag, so deploying a published one is a deliberate override
+    # of what was just applied. `set image` rather than a templated manifest: the manifests stay
+    # plain YAML that `kubectl apply -f` can read directly, which is what lets this script keep
+    # applying them one at a time in dependency order with a wait between each.
+    #
+    # It is idempotent -- if the deployment already runs this exact reference, kubectl patches
+    # nothing and no rollout happens, which is the correct outcome for redeploying the same tag.
+    if ($Pull) {
+        $image = Get-ImageRef $s.Name $deployTag
+        Write-Host "    pinning image to $image"
+        kubectl -n $ns set image "deployment/$($s.Name)" "$($s.Name)=$image"
+        Assert-LastExit "set image $($s.Name)"
+    }
+
     # The image tag never changes, so a rebuilt :dev image is invisible to Kubernetes -- `apply`
     # sees an identical pod template and does nothing. An explicit restart is what actually rolls
-    # the new bits out.
-    if ($existed -and -not $SkipBuild) {
+    # the new bits out. Not needed under -Pull: `set image` above already changed the pod template
+    # if the reference moved, and if it did not there is nothing new to roll out.
+    if ($existed -and $buildImages) {
         kubectl -n $ns rollout restart "deployment/$($s.Name)"
         Assert-LastExit "rollout restart $($s.Name)"
     }

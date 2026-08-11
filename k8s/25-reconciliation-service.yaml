@@ -29,7 +29,8 @@ spec:
     spec:
       containers:
         - name: reconciliation-service
-          image: banking/reconciliation-service:dev
+          # See 20-auth-service.yaml for why `:dev` is a tag CI never publishes.
+          image: ghcr.io/emkonga/banking-system/reconciliation-service:dev
           imagePullPolicy: IfNotPresent
 
           ports:
