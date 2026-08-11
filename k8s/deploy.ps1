@@ -189,7 +189,21 @@ spec:
       restartPolicy: Never
       containers:
         - name: flyway
-          image: flyway/flyway:10-alpine
+          # NOT the -alpine variant, and this is the one image in the stack where that is a
+          # decision rather than a default. Every -alpine tag in the Flyway 10 line is published
+          # linux/amd64 ONLY -- verified with `docker manifest inspect`: 10-alpine and
+          # 10.22-alpine list amd64 alone, while plain `10` carries amd64, arm and arm64. The
+          # target host for the public deployment is Oracle A1, which is aarch64, so 10-alpine
+          # would have failed there with an exec-format error at the one step every service
+          # depends on -- and only after the cluster was already provisioned.
+          #
+          # `11-alpine` is also multi-arch and would keep the smaller image, but it is a major
+          # bump on the tool that owns flyway_schema_history, and these databases already hold
+          # v10 history rows. Staying on 10 keeps the checksum algorithm identical; a mismatch
+          # there reads as "Migration checksum mismatch" against a file that is perfectly correct
+          # on disk, which has already cost a session here once for an unrelated reason. Revisit
+          # 11-alpine if the larger pull becomes a problem.
+          image: flyway/flyway:10
           args: ["-connectRetries=10", "migrate"]
           env:
             - name: FLYWAY_URL
