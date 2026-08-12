@@ -4,7 +4,6 @@ import com.banking.payment.resilience.KafkaEventPublisher;
 import com.banking.events.PaymentEvent;
 import com.banking.payment.entity.OutboxEvent;
 import com.banking.payment.entity.OutboxStatus;
-import com.banking.payment.event.OutboxTriggerEvent;
 import com.banking.payment.repository.OutboxEventRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -13,8 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Instant;
 import java.util.List;
@@ -34,12 +31,20 @@ public class OutboxPoller {
     @Value("${outbox.base-backoff-seconds:15}")
     private long baseBackoffSeconds;
 
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
-    public void onTransferCommitted(OutboxTriggerEvent event) {
-        pollAndPublish();
-    }
-
+    /**
+     * Claims a batch of PENDING rows and publishes each one, awaiting the broker's acknowledgement.
+     *
+     * <p>Two callers, and neither of them is a request thread any more. The {@code @Scheduled} tick
+     * is the durable path; {@link OutboxTrigger} wakes it early on the dedicated publish executor
+     * once a settlement commits. It used to be woken <em>inline</em> from an AFTER_COMMIT listener
+     * on this class, which meant a batch of up to ten blocking acks ran on the thread serving the
+     * user's transfer.
+     *
+     * <p>Note the cost this still carries on its own thread: with the broker reachable but not
+     * acking, one pass is up to ten times {@code delivery.timeout.ms}. That is why
+     * {@code spring.task.scheduling.pool.size} is above 1 — {@code TransferRecoveryPoller} shares
+     * this scheduler, and a Kafka outage must not be able to stop the saga settling money in flight.
+     */
     @Scheduled(fixedDelayString = "${outbox.poll-interval-ms:15000}")
     @Transactional
     public void pollAndPublish() {
