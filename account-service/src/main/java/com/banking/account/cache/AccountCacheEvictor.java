@@ -16,7 +16,7 @@ import java.util.UUID;
  * <p>
  * Driven by {@link AccountsChangedEvent} rather than direct calls, so the services that move money
  * announce what changed without depending on the cache at all — same pattern as
- * {@code OutboxPoller.onTransferCommitted}.
+ * {@code OutboxTrigger.onTransferCommitted} in payment-service.
  * <p>
  * <b>Why after commit.</b> Evicting inside the transaction would open a window where a concurrent
  * reader misses the cache, reads the not-yet-committed old balance, and re-populates the entry —

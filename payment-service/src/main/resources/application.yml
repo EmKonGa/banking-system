@@ -30,6 +30,47 @@ spring:
       hibernate:
         default_schema: banking_payment
 
+  cloud:
+    openfeign:
+      client:
+        config:
+          account-service:
+            # Feign's defaults are 10s connect and 60s read (feign.Request.Options), and nothing
+            # overrode them. Both are wrong for an internal call on the money path.
+            #
+            # connect-timeout: inside the cluster a healthy pod completes a TCP handshake in single
+            # digit milliseconds, so 2s is generous and anything slower is a pod that is gone. It
+            # also bounds the retries that ConnectFailurePredicate now allows: three attempts cost
+            # at most ~7.5s including backoff, where the old default would have made that ~33s.
+            #
+            # read-timeout: this is the judgment call. The remote work is two row locks, two updates
+            # and an insert -- well under a second in practice -- so 15s is ~100x headroom while
+            # capping what a single transfer can hold a request thread for. The trade is real: a
+            # transfer that would have completed at 20s now surfaces as indeterminate and is left
+            # PENDING for TransferRecoveryPoller. That is the safe direction (nothing is written
+            # off, the poller establishes the outcome) and it stays well inside the poller's 60s
+            # grace period, but it does mean a genuinely slow account-service produces PENDING
+            # intents rather than slow successes. Raise it if that trade ever looks wrong.
+            connect-timeout: ${ACCOUNT_CLIENT_CONNECT_TIMEOUT_MS:2000}
+            read-timeout: ${ACCOUNT_CLIENT_READ_TIMEOUT_MS:15000}
+
+  task:
+    scheduling:
+      # Spring Boot's default is 1, and this service has two @Scheduled methods that must not be
+      # able to block each other: OutboxPoller.pollAndPublish (15s) and
+      # TransferRecoveryPoller.settleStrandedTransfers (30s).
+      #
+      # The poll is the one that blocks. It awaits a broker ack per row over a batch of up to ten,
+      # so with Kafka reachable but not acking a single pass can hold its thread for minutes. On one
+      # thread that silently stopped the recovery poller — a Kafka outage disabling the mechanism
+      # that settles money whose outcome payment-service never learned. Two unrelated safety nets,
+      # one of them switched off by the other's dependency, and nothing in either file said so.
+      #
+      # Raise this with the number of @Scheduled methods, not with load: the point is one thread per
+      # task that can block for a long time, so no task waits on another's dependency.
+      pool:
+        size: 2
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -149,9 +190,13 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 30s
         permitted-number-of-calls-in-half-open-state: 3
+        # java.net.ConnectException was listed here too and removed for the same reason it was wrong
+        # in the retry below: Feign wraps it in RetryableException and never throws it directly. The
+        # breaker was never affected — RetryableException extends FeignException, so the first entry
+        # already records every transport failure — but a dead entry that appears to do something is
+        # how the retry's version went unnoticed for so long.
         record-exceptions:
           - feign.FeignException
-          - java.net.ConnectException
           - java.util.concurrent.TimeoutException
         ignore-exceptions:
           - com.banking.common.exception.AppException
@@ -179,9 +224,21 @@ resilience4j:
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2.0
         exponential-max-wait-duration: 5s
+        # A predicate, not a class list, because the question is not "which exception type" but
+        # "does this failure prove the request never arrived". Feign wraps every IOException in
+        # RetryableException and Resilience4j matches concrete classes without unwrapping causes, so
+        # the java.net.ConnectException entry that used to sit here could never match — @Retry
+        # retried nothing, and a rolling restart of account-service stranded transfers as PENDING
+        # intents. See ConnectFailurePredicate for why adding feign.RetryableException instead would
+        # have been worse: it also covers read timeouts, where the money may already have moved.
+        #
+        # OR'd with retry-exceptions below (RetryConfig.createRetryOnExceptionPredicate), not
+        # replacing it.
+        retry-exception-predicate: com.banking.payment.resilience.ConnectFailurePredicate
+        # Kept: this one is a real HTTP 503 from account-service, not a transport failure, and it
+        # does match what the runtime throws.
         retry-exceptions:
           - feign.FeignException.ServiceUnavailable
-          - java.net.ConnectException
         ignore-exceptions:
           - com.banking.common.exception.AppException
           - feign.FeignException.BadRequest

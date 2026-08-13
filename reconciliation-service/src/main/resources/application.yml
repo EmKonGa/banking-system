@@ -112,9 +112,12 @@ resilience4j:
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
         wait-duration-in-open-state: 60s
+        # java.net.ConnectException removed: Feign wraps it in RetryableException and never throws
+        # it directly, so the entry never matched. Harmless here -- RetryableException extends
+        # FeignException, so the entry above already records every transport failure -- but a dead
+        # entry that looks load-bearing is what hid the same mistake in payment-service's retry.
         record-exceptions:
           - feign.FeignException
-          - java.net.ConnectException
           - java.util.concurrent.TimeoutException
         ignore-exceptions:
           - com.banking.common.exception.AppException
@@ -123,9 +126,12 @@ resilience4j:
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
         wait-duration-in-open-state: 60s
+        # java.net.ConnectException removed: Feign wraps it in RetryableException and never throws
+        # it directly, so the entry never matched. Harmless here -- RetryableException extends
+        # FeignException, so the entry above already records every transport failure -- but a dead
+        # entry that looks load-bearing is what hid the same mistake in payment-service's retry.
         record-exceptions:
           - feign.FeignException
-          - java.net.ConnectException
           - java.util.concurrent.TimeoutException
         ignore-exceptions:
           - com.banking.common.exception.AppException

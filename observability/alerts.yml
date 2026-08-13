@@ -61,3 +61,72 @@ groups:
           description: >-
             The auditor is down or unreachable. Nothing is checking that balances match the ledger,
             and the staleness alert cannot fire while its own metric is absent.
+
+  - name: event-delivery
+    rules:
+      # ---------------------------------------------------------------------------------------
+      # A transfer happened and nobody told the user.
+      #
+      # Note what these do NOT cover, because the reconciler above looks like it should: an
+      # abandoned event or a dead-lettered one leaves the money entirely correct. The balance
+      # matches, the ledger row says COMPLETED, and a sweep reports the system clean -- accurately.
+      # Delivery failures are invisible to every invariant reconciliation checks, which is why they
+      # need their own two rules rather than being folded into the group above.
+      # ---------------------------------------------------------------------------------------
+
+      # No `for:` clause. This gauge counts rows in a terminal state -- OutboxPoller gave up on them
+      # and findPendingWithLock will never select them again -- so the condition cannot resolve on
+      # its own and waiting adds delay without adding confidence. It is the opposite case from
+      # ReconciliationSuspected, where waiting is what separates artefact from breakage.
+      #
+      # max() rather than a bare comparison: payment-service is one replica today, but the value is
+      # read from the shared database, so every replica reports the same number and a bare
+      # comparison would fire once per pod for one problem.
+      - alert: OutboxEventsAbandoned
+        expr: max(payment_outbox_abandoned_events) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} payment event(s) will never be delivered"
+          description: >-
+            OutboxPoller exhausted outbox.max-retries (default 5, roughly 450s of backoff) and set
+            these rows FAILED. Nothing retries or replays a FAILED row -- the at-least-once
+            guarantee the outbox provides is bounded by that retry count, and this is what crossing
+            the bound looks like. The money is fine and reconciliation will report clean; what was
+            lost is the notification. Recover by hand:
+            UPDATE outbox_events SET status='PENDING', retry_count=0, next_retry_at=NULL,
+            last_error=NULL WHERE status='FAILED'; -- safe because the consumer is idempotent on
+            processed_events, so a redelivery of an event that did somehow arrive is a no-op.
+
+      # A counter, so this asks "did any arrive recently" rather than "are any present" -- a
+      # dead-lettered record stays on the topic forever and a gauge of topic depth would keep
+      # firing long after the incident was handled. increase() also survives the pod restart that a
+      # counter reset would otherwise read as negative.
+      #
+      # sum() across instances: notification-service runs 2 replicas and the counter is per pod.
+      - alert: PaymentEventsDeadLettered
+        expr: sum(increase(notification_events_dead_lettered_total[1h])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} payment event(s) dead-lettered in the last hour"
+          description: >-
+            PaymentEventConsumer failed three attempts and the record was parked on
+            payment.events.DLT. The transfer itself completed -- this is a user who was not told.
+            Read the payload from payment.events.DLT; a deserialization failure is republished as
+            the original bytes and a handler failure as JSON, so the two are distinguishable.
+
+      # The gap neither rule above can cover, and the same reasoning as ReconciliationServiceDown:
+      # if the process is not scraped its series goes stale, `max()` and `increase()` return no
+      # data, and both rules silently stop evaluating. A hard-down service is the quietest failure
+      # in this group -- and payment-service being down also means nothing is publishing at all.
+      - alert: EventDeliveryServiceDown
+        expr: up{job=~"payment-service|notification-service"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is not being scraped"
+          description: >-
+            Events are not being published or not being consumed, and the two delivery alerts above
+            cannot fire while their metrics are absent.
