@@ -17,6 +17,13 @@ spring:
           uri: ${AUTH_SERVICE_URL:http://localhost:8081}
           predicates:
             - Path=/api/auth/register
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${RATE_LIMIT_AUTH_REPLENISH_PER_SEC:1}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMIT_AUTH_BURST:5}
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
           metadata:
             skip-jwt: true
 
@@ -24,6 +31,13 @@ spring:
           uri: ${AUTH_SERVICE_URL:http://localhost:8081}
           predicates:
             - Path=/api/auth/login
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${RATE_LIMIT_AUTH_REPLENISH_PER_SEC:1}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMIT_AUTH_BURST:5}
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
           metadata:
             skip-jwt: true
 
@@ -31,6 +45,13 @@ spring:
           uri: ${AUTH_SERVICE_URL:http://localhost:8081}
           predicates:
             - Path=/api/auth/refresh
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${RATE_LIMIT_AUTH_REPLENISH_PER_SEC:1}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMIT_AUTH_BURST:5}
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
           metadata:
             skip-jwt: true
 
