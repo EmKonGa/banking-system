@@ -1,0 +1,29 @@
+<configuration>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      docker-java logs the Docker socket conversation at DEBUG, including every byte of container
+      stdout re-printed as a hex-escaped wire frame. Left on, a single test run buries its own
+      failure message under tens of thousands of lines.
+    -->
+    <logger name="com.github.dockerjava" level="WARN"/>
+    <logger name="org.testcontainers" level="INFO"/>
+
+    <!--
+      The services' own logs are kept, at WARN. They are the only window into what happened inside
+      the two processes when an assertion about their interaction fails — and the recovery poller
+      and saga both log at WARN precisely when they do something worth seeing.
+    -->
+    <logger name="account-service" level="WARN"/>
+    <logger name="payment-service" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

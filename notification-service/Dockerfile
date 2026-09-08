@@ -10,6 +10,7 @@ COPY account-service/pom.xml account-service/
 COPY payment-service/pom.xml payment-service/
 COPY notification-service/pom.xml notification-service/
 COPY reconciliation-service/pom.xml reconciliation-service/
+COPY integration-tests/pom.xml integration-tests/
 COPY banking-events/src banking-events/src
 COPY banking-common/src banking-common/src
 RUN mvn install -pl banking-events,banking-common -DskipTests -q
